@@ -1,0 +1,12 @@
+# CUDA-enabled PyTorch wheels (adjust cuXXX if you target a different CUDA runtime)
+--index-url https://download.pytorch.org/whl/cu124
+--extra-index-url https://pypi.org/simple
+
+torch
+torchvision
+opencv-python
+numpy
+tqdm
+requests
+pycocotools
+Pillow
