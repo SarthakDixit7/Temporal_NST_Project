@@ -10,7 +10,8 @@ from tqdm import tqdm
 def download_file(url, dest_path, chunk_size=1024 * 1024):
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    resp = requests.get(url, stream=True)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(url, stream=True, headers=headers)
     resp.raise_for_status()
     total = int(resp.headers.get("content-length", 0))
     with open(dest_path, "wb") as f, tqdm(
@@ -83,6 +84,53 @@ def download_wikiart_subset(target_root="../data/wikiart_subset", urls_file=None
             print(f"Failed to download {url}: {e}")
 
 
+def download_wikiart_hf(target_root="../data/wikiart_hf", num_samples=200, split="train"):
+    """Download a subset of the Hugging Face `huggan/wikiart` dataset.
+
+    Saves up to `num_samples` images into `target_root`.
+    """
+    try:
+        from datasets import load_dataset
+    except Exception as e:
+        raise RuntimeError("Please install the `datasets` package to use Hugging Face downloads") from e
+
+    out_dir = Path(target_root)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Loading Hugging Face dataset 'huggan/wikiart' (split={split})")
+    ds = load_dataset("huggan/wikiart", split=split)
+    from PIL import Image
+    from io import BytesIO
+
+    saved = 0
+    for i, example in enumerate(ds):
+        if num_samples and saved >= num_samples:
+            break
+        img = example.get("image") or example.get("img") or example.get("image_url")
+        if img is None:
+            continue
+        out_path = out_dir / f"hf_style_{saved+1}.jpg"
+        try:
+            if hasattr(img, "save"):
+                img.save(out_path)
+            elif isinstance(img, dict) and "bytes" in img:
+                Image.open(BytesIO(img["bytes"])).convert("RGB").save(out_path)
+            elif isinstance(img, (bytes, bytearray)):
+                Image.open(BytesIO(img)).convert("RGB").save(out_path)
+            elif isinstance(img, str) and img.startswith("http"):
+                # fallback: download URL
+                download_file(img, out_path)
+            else:
+                # attempt to convert via PIL
+                Image.open(img).convert("RGB").save(out_path)
+            saved += 1
+            if saved % 50 == 0:
+                print(f"Saved {saved} images")
+        except Exception as e:
+            print(f"Failed to save example {i}: {e}")
+
+    print(f"Downloaded {saved} images to {out_dir}")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -90,6 +138,9 @@ if __name__ == "__main__":
     parser.add_argument("--coco", action="store_true", help="Download COCO train2014 (large)")
     parser.add_argument("--wikiart", action="store_true", help="Download WikiArt subset (small)")
     parser.add_argument("--wikiart-urls", type=str, help="Path to newline-separated URLs to download")
+    parser.add_argument("--wikiart-hf", action="store_true", help="Download WikiArt from Hugging Face (huggan/wikiart)")
+    parser.add_argument("--hf-num", type=int, default=200, help="Number of HF images to download (default 200)")
+    parser.add_argument("--hf-split", type=str, default="train", help="HF dataset split to use (default 'train')")
     parser.add_argument("--out", type=str, default="data", help="Base output directory")
     args = parser.parse_args()
 
@@ -98,3 +149,6 @@ if __name__ == "__main__":
         download_coco_train2014(base / "train2014")
     if args.wikiart:
         download_wikiart_subset(base / "wikiart_subset", urls_file=args.wikiart_urls)
+    if args.wikiart_hf:
+        download_wikiart_hf(base / "wikiart_hf", num_samples=args.hf_num, split=args.hf_split)
+

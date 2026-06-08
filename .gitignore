@@ -1,5 +1,7 @@
 .venv/
-data/
+data/*
+!data/dataset.py
+!data/wikiart_urls.txt
 checkpoints/
 __pycache__/
 *.pyc
