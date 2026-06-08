@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 
 from data.dataset import CocoDataset, StyleDataset
-
+#for training 
 
 def make_dataloaders(
 	coco_root="data/train2014", wikiart_root="data/wikiart_subset", batch_size=16, num_workers=4
