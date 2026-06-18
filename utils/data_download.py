@@ -1,53 +1,112 @@
 import os
 import shutil
+import tarfile
+import time
 import zipfile
 from pathlib import Path
 
 import requests
 from tqdm import tqdm
 
+import sys
+from pathlib import Path
 
-def download_file(url, dest_path, chunk_size=1024 * 1024):
+# Add project root to the Python path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+from config import DATA_ROOT
+
+
+def download_file(url, dest_path, chunk_size=1024 * 1024, retries=5):
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
+    
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    resp = requests.get(url, stream=True, headers=headers)
-    resp.raise_for_status()
-    total = int(resp.headers.get("content-length", 0))
-    with open(dest_path, "wb") as f, tqdm(
-        total=total, unit="B", unit_scale=True, desc=dest_path.name
-    ) as pbar:
-        for chunk in resp.iter_content(chunk_size=chunk_size):
-            if not chunk:
-                continue
-            f.write(chunk)
-            pbar.update(len(chunk))
-    return dest_path
+    
+    file_size = 0
+    if dest_path.exists():
+        file_size = dest_path.stat().st_size
+        headers["Range"] = f"bytes={file_size}-"
+
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, stream=True, headers=headers, timeout=30)
+            resp.raise_for_status()
+
+            total = int(resp.headers.get("content-length", 0))
+            if "Content-Range" in resp.headers:
+                total = int(resp.headers["Content-Range"].split("/")[1])
+
+            mode = "ab" if file_size > 0 else "wb"
+            with open(dest_path, mode) as f, tqdm(
+                total=total,
+                unit="B",
+                unit_scale=True,
+                desc=dest_path.name,
+                initial=file_size,
+            ) as pbar:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+            
+            # Verify download completion
+            if dest_path.stat().st_size == total:
+                return dest_path
+            else:
+                print(f"Download incomplete. Retrying...")
+                file_size = dest_path.stat().st_size
+                headers["Range"] = f"bytes={file_size}-"
+
+        except (requests.exceptions.RequestException, IOError) as e:
+            print(f"Download error (attempt {attempt + 1}/{retries}): {e}")
+            if attempt < retries - 1:
+                time.sleep(5 * (attempt + 1))  # Exponential backoff
+                file_size = dest_path.stat().st_size
+                headers["Range"] = f"bytes={file_size}-"
+            else:
+                raise
+    
+    raise IOError("Failed to download file after multiple retries.")
 
 
-def download_and_extract_zip(url, out_dir):
+def download_and_extract(url, out_dir):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tmp_zip = out_dir / "download_temp.zip"
-    print(f"Downloading {url} -> {tmp_zip}")
-    download_file(url, tmp_zip)
-    print(f"Extracting {tmp_zip} to {out_dir}")
-    with zipfile.ZipFile(tmp_zip, "r") as z:
-        z.extractall(out_dir)
-    tmp_zip.unlink()
+    filename = Path(url).name
+    tmp_archive = out_dir / filename
+
+    print(f"Downloading {url} -> {tmp_archive}")
+    download_file(url, tmp_archive)
+    print(f"Extracting {tmp_archive} to {out_dir}")
+
+    if ".zip" in filename:
+        with zipfile.ZipFile(tmp_archive, "r") as z:
+            z.extractall(out_dir)
+    elif ".tar" in filename:
+        with tarfile.open(tmp_archive, "r") as t:
+            t.extractall(out_dir)
+    else:
+        print(f"Unsupported archive format for {filename}")
+        return
+
+    tmp_archive.unlink()
+    print(f"Deleted {tmp_archive}")
 
 
-def download_coco_train2014(target_root="../data/train2014"):
+def download_coco_train2014(target_root):
     """Downloads and extracts MS-COCO 2014 training images.
 
     The official COCO train2014 archive is large (~13GB). This helper
     downloads the official zip and extracts it into `target_root`.
     """
     url = "http://images.cocodataset.org/zips/train2014.zip"
-    download_and_extract_zip(url, target_root)
+    download_and_extract(url, target_root)
 
 
-def download_wikiart_subset(target_root="../data/wikiart_subset", urls_file=None):
+def download_wikiart_subset(target_root, urls_file=None):
     """Downloads a small subset of style images.
 
     By default this function looks for a newline-separated list of image
@@ -84,7 +143,7 @@ def download_wikiart_subset(target_root="../data/wikiart_subset", urls_file=None
             print(f"Failed to download {url}: {e}")
 
 
-def download_wikiart_hf(target_root="../data/wikiart_hf", num_samples=200, split="train"):
+def download_wikiart_hf(target_root, num_samples=200, split="train"):
     """Download a subset of the Hugging Face `huggan/wikiart` dataset.
 
     Saves up to `num_samples` images into `target_root`.
@@ -135,16 +194,23 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Download COCO and WikiArt subsets")
+    parser.add_argument(
+        "--target_dir",
+        type=str,
+        default=DATA_ROOT,
+        help="Base output directory for datasets.",
+    )
     parser.add_argument("--coco", action="store_true", help="Download COCO train2014 (large)")
     parser.add_argument("--wikiart", action="store_true", help="Download WikiArt subset (small)")
     parser.add_argument("--wikiart-urls", type=str, help="Path to newline-separated URLs to download")
     parser.add_argument("--wikiart-hf", action="store_true", help="Download WikiArt from Hugging Face (huggan/wikiart)")
     parser.add_argument("--hf-num", type=int, default=200, help="Number of HF images to download (default 200)")
     parser.add_argument("--hf-split", type=str, default="train", help="HF dataset split to use (default 'train')")
-    parser.add_argument("--out", type=str, default="data", help="Base output directory")
     args = parser.parse_args()
 
-    base = Path(args.out)
+    base = Path(args.target_dir)
+    base.mkdir(parents=True, exist_ok=True)
+
     if args.coco:
         download_coco_train2014(base / "train2014")
     if args.wikiart:

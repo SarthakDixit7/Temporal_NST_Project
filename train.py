@@ -1,3 +1,4 @@
+import argparse
 from itertools import cycle
 from pathlib import Path
 
@@ -6,19 +7,20 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
+from config import CHECKPOINT_ROOT, DATA_ROOT, STYLE_ROOT
 from data.dataset import CocoDataset, StyleDataset
 from models.transform_net import TransformNetwork
 from models.vgg_loss import VGG19LossNetwork, gram_matrix
 
 
 def make_dataloaders(
-    coco_root="data/train2014",
-    wikiart_root="data/wikiart_hf",
+    coco_root,
+    style_root,
     batch_size=4,
     num_workers=0,
 ):
     coco_ds = CocoDataset(coco_root)
-    style_ds = StyleDataset(wikiart_root)
+    style_ds = StyleDataset(style_root)
 
     coco_loader = DataLoader(coco_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     style_loader = DataLoader(style_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -40,6 +42,8 @@ def save_checkpoint(model, checkpoint_dir, iteration):
 
 
 def train(
+    dataset_dir,
+    style_dir,
     epochs=1,
     batch_size=4,
     num_workers=0,
@@ -60,7 +64,9 @@ def train(
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
     mse_loss = nn.MSELoss()
 
-    coco_loader, style_loader = make_dataloaders(batch_size=batch_size, num_workers=num_workers)
+    coco_loader, style_loader = make_dataloaders(
+        coco_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
+    )
     style_iter = cycle(style_loader)
 
     global_step = 0
@@ -114,4 +120,32 @@ def train(
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train a neural style transfer model.")
+    parser.add_argument("--dataset_dir", type=str, default=DATA_ROOT, help="Path to the COCO dataset.")
+    parser.add_argument(
+        "--style_dir", type=str, default=STYLE_ROOT, help="Path to the style dataset (WikiArt)."
+    )
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training.")
+    parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading.")
+    parser.add_argument("--content_weight", type=float, default=1.0, help="Weight for content loss.")
+    parser.add_argument("--style_weight", type=float, default=10.0, help="Weight for style loss.")
+    parser.add_argument("--tv_weight", type=float, default=1e-6, help="Weight for total variation loss.")
+    parser.add_argument(
+        "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
+    )
+    parser.add_argument("--checkpoint_dir", type=str, default=CHECKPOINT_ROOT, help="Directory to save checkpoints.")
+
+    args = parser.parse_args()
+    train(
+        dataset_dir=args.dataset_dir,
+        style_dir=args.style_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        content_weight=args.content_weight,
+        style_weight=args.style_weight,
+        tv_weight=args.tv_weight,
+        checkpoint_interval=args.checkpoint_interval,
+        checkpoint_dir=args.checkpoint_dir,
+    )
