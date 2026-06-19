@@ -14,7 +14,7 @@ from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from config import CHECKPOINT_ROOT, DATA_ROOT, STYLE_ROOT
+from config import CHECKPOINT_ROOT, DATA_ROOT
 from data.dataset import CocoDataset, StyleDataset
 from models.transform_net import TransformNetwork
 from models.vgg_loss import VGG19LossNetwork, gram_matrix
@@ -33,7 +33,7 @@ def make_dataloaders(
         coco_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
     )
     style_loader = DataLoader(
-        style_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
+        style_ds, batch_size=1, shuffle=True, num_workers=num_workers, drop_last=False
     )
     return coco_loader, style_loader
 
@@ -59,8 +59,8 @@ def train(
     batch_size=8,
     num_workers=4,
     content_weight=1.0,
-    style_weight=10.0,
-    tv_weight=1e-6,
+    style_weight=100000,
+    tv_weight=1e-4,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
     resume_checkpoint=None,
@@ -89,7 +89,7 @@ def train(
 
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
     mse_loss = nn.MSELoss()
-    
+
     scaler = GradScaler('cuda')
 
     coco_loader, style_loader = make_dataloaders(
@@ -140,7 +140,8 @@ def train(
 
             print(
                 f"epoch={epoch + 1} step={global_step} "
-                f"content={content_loss.item():.4f} style={style_loss.item():.4f} "
+                f"content={content_loss.item():.4f} "
+                f"style={(style_weight * style_loss).item():.4f} "
                 f"tv={total_variation.item():.4f} total={loss.item():.4f}"
             )
 
@@ -161,8 +162,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
     parser.add_argument("--content_weight", type=float, default=1.0, help="Weight for content loss.")
-    parser.add_argument("--style_weight", type=float, default=10.0, help="Weight for style loss.")
-    parser.add_argument("--tv_weight", type=float, default=1e-6, help="Weight for total variation loss.")
+    parser.add_argument("--style_weight", type=float, default=100000.0, help="Weight for style loss.")
+    parser.add_argument("--tv_weight", type=float, default=1e-4, help="Weight for total variation loss.")
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
     )

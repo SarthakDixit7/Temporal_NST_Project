@@ -52,13 +52,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--content_path",
         type=str,
-        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000000072.jpg",
+        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000000839.jpg",
         help="Path to the input content image.",
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_42000.pth",
+        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_10373.pth",
         help="Path to a .pth checkpoint.",
     )
     parser.add_argument(
