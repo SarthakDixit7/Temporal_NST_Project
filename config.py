@@ -1,17 +1,16 @@
-import os
+"""Environment-aware paths for local and scratch-backed runs."""
 
-# Check if running on the Hex server environment
-IS_HEX = os.path.exists("/mnt/fast0/")
+from pathlib import Path
 
-if IS_HEX:
-    # Paths for the Hex scratch storage
-    BASE_DIR = "/mnt/fast0/sd2885/"
-    DATA_ROOT = os.path.join(BASE_DIR, "data")
-    STYLE_ROOT = os.path.join(BASE_DIR, "data")  # Assuming styles are also in the data directory
-    CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints")
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SCRATCH_ROOT = Path("/mnt/fast0/sd2885")
+
+if SCRATCH_ROOT.exists():
+	DATA_ROOT = str(SCRATCH_ROOT / "data")
+	STYLE_ROOT = str(SCRATCH_ROOT / "data" / "wikiart_hf")
+	CHECKPOINT_ROOT = str(SCRATCH_ROOT / "checkpoints")
 else:
-    # Local paths
-    BASE_DIR = "."
-    DATA_ROOT = os.path.join(BASE_DIR, "data")
-    STYLE_ROOT = os.path.join(BASE_DIR, "data")
-    CHECKPOINT_ROOT = os.path.join(BASE_DIR, "checkpoints")
+	DATA_ROOT = str(PROJECT_ROOT / "data")
+	STYLE_ROOT = str(PROJECT_ROOT / "data" / "wikiart_hf")
+	CHECKPOINT_ROOT = str(PROJECT_ROOT / "checkpoints")

@@ -5,12 +5,12 @@ import torch.nn as nn
 from torchvision import models
 
 
-def gram_matrix(feature_map):
-    batch_size, channels, height, width = feature_map.shape
-    features = feature_map.view(batch_size, channels, height * width)
-    features_t = features.transpose(1, 2)
-    gram = torch.bmm(features, features_t)
-    return gram / (channels * height * width)
+def gram_matrix(input):
+    b, c, h, w = input.size()
+    # Cast to float32 to prevent FP16 overflow during multiplication
+    features = input.view(b, c, h * w).to(torch.float32)
+    G = torch.bmm(features, features.transpose(1, 2))
+    return G.div(c * h * w)
 
 
 def _load_vgg19_features():

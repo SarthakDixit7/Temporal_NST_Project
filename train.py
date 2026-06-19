@@ -1,9 +1,16 @@
+import os
+import re
+
+os.environ["TORCH_HOME"] = "/mnt/fast0/sd2885/cache/"
+
 import argparse
 from itertools import cycle
 from pathlib import Path
 
 import torch
 import torch.nn as nn
+
+from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -22,8 +29,12 @@ def make_dataloaders(
     coco_ds = CocoDataset(coco_root)
     style_ds = StyleDataset(style_root)
 
-    coco_loader = DataLoader(coco_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    style_loader = DataLoader(style_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    coco_loader = DataLoader(
+        coco_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
+    )
+    style_loader = DataLoader(
+        style_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
+    )
     return coco_loader, style_loader
 
 
@@ -45,16 +56,31 @@ def train(
     dataset_dir,
     style_dir,
     epochs=1,
-    batch_size=4,
-    num_workers=0,
+    batch_size=8,
+    num_workers=4,
     content_weight=1.0,
     style_weight=10.0,
     tv_weight=1e-6,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
+    resume_checkpoint=None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.backends.cudnn.benchmark = True
     transform_net = TransformNetwork().to(device)
+
+    global_step = 0
+    if resume_checkpoint is not None:
+        resume_path = Path(resume_checkpoint)
+        transform_net.load_state_dict(torch.load(resume_path, map_location=device))
+        match = re.search(r"transform_net_iter_(\d+)\.pth$", resume_path.name)
+        if match is None:
+            raise ValueError(
+                f"Could not infer training step from checkpoint filename: {resume_path.name}"
+            )
+        global_step = int(match.group(1))
+        print(f"Resuming training from checkpoint {resume_path} at step {global_step}")
+
     vgg = VGG19LossNetwork().to(device)
     vgg.eval()
 
@@ -63,13 +89,14 @@ def train(
 
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
     mse_loss = nn.MSELoss()
+    
+    scaler = GradScaler('cuda')
 
     coco_loader, style_loader = make_dataloaders(
         coco_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
     )
     style_iter = cycle(style_loader)
 
-    global_step = 0
     transform_net.train()
 
     for epoch in range(epochs):
@@ -81,28 +108,30 @@ def train(
 
             optimizer.zero_grad(set_to_none=True)
 
-            generated_images = transform_net(content_images)
+            with autocast('cuda'):
+                generated_images = transform_net(content_images)
 
             with torch.no_grad():
-                content_target, _ = vgg(content_images)
-                style_content_target, style_targets = vgg(style_images)
+                content_target, _ = vgg(content_images.float())
+                _, style_targets = vgg(style_images.float())
 
-            generated_content, generated_styles = vgg(generated_images)
+            generated_content, generated_styles = vgg(generated_images.float())
 
             content_loss = mse_loss(generated_content, content_target)
 
-            style_loss = 0.0
+            style_loss = torch.zeros((), device=device, dtype=torch.float32)
             style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
             for layer_name in style_layers:
                 generated_gram = gram_matrix(generated_styles[layer_name])
                 target_gram = gram_matrix(style_targets[layer_name])
                 style_loss = style_loss + mse_loss(generated_gram, target_gram)
 
-            total_variation = tv_loss(generated_images)
+            total_variation = tv_loss(generated_images.float())
             loss = (content_weight * content_loss) + (style_weight * style_loss) + (tv_weight * total_variation)
 
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             global_step += 1
 
@@ -123,11 +152,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a neural style transfer model.")
     parser.add_argument("--dataset_dir", type=str, default=DATA_ROOT, help="Path to the COCO dataset.")
     parser.add_argument(
-        "--style_dir", type=str, default=STYLE_ROOT, help="Path to the style dataset (WikiArt)."
+        "--style_dir",
+        type=str,
+        default="/mnt/fast0/sd2885/data/my_style/",
+        help="Path to the style dataset (WikiArt).",
     )
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training.")
-    parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading.")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
     parser.add_argument("--content_weight", type=float, default=1.0, help="Weight for content loss.")
     parser.add_argument("--style_weight", type=float, default=10.0, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-6, help="Weight for total variation loss.")
@@ -135,6 +167,12 @@ if __name__ == "__main__":
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
     )
     parser.add_argument("--checkpoint_dir", type=str, default=CHECKPOINT_ROOT, help="Directory to save checkpoints.")
+    parser.add_argument(
+        "--resume_checkpoint",
+        type=str,
+        default=None,
+        help="Path to a .pth checkpoint to resume training from.",
+    )
 
     args = parser.parse_args()
     train(
@@ -148,4 +186,5 @@ if __name__ == "__main__":
         tv_weight=args.tv_weight,
         checkpoint_interval=args.checkpoint_interval,
         checkpoint_dir=args.checkpoint_dir,
+        resume_checkpoint=args.resume_checkpoint,
     )
