@@ -1,3 +1,4 @@
+
 import os
 import re
 
@@ -10,7 +11,6 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -59,7 +59,7 @@ def train(
     batch_size=8,
     num_workers=4,
     content_weight=1.0,
-    style_weight=100000,
+    style_weight=1000000.0,
     tv_weight=1e-4,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
@@ -90,8 +90,6 @@ def train(
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
     mse_loss = nn.MSELoss()
 
-    scaler = GradScaler('cuda')
-
     coco_loader, style_loader = make_dataloaders(
         coco_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
     )
@@ -108,14 +106,17 @@ def train(
 
             optimizer.zero_grad(set_to_none=True)
 
-            with autocast('cuda'):
-                generated_images = transform_net(content_images)
+            generated_images = transform_net(content_images)
+
+            # Shift the [-1.0, 1.0] Tanh output to [0.0, 1.0] to match target distributions
+            mapped_generated_images = (generated_images + 1.0) / 2.0
 
             with torch.no_grad():
                 content_target, _ = vgg(content_images.float())
                 _, style_targets = vgg(style_images.float())
 
-            generated_content, generated_styles = vgg(generated_images.float())
+            # Pass the mapped images to VGG so loss computations are calculated on identical ranges
+            generated_content, generated_styles = vgg(mapped_generated_images.float())
 
             content_loss = mse_loss(generated_content, content_target)
 
@@ -126,12 +127,15 @@ def train(
                 target_gram = gram_matrix(style_targets[layer_name])
                 style_loss = style_loss + mse_loss(generated_gram, target_gram)
 
-            total_variation = tv_loss(generated_images.float())
+            total_variation = tv_loss(mapped_generated_images.float())
             loss = (content_weight * content_loss) + (style_weight * style_loss) + (tv_weight * total_variation)
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
+
+            if global_step % 10 == 0:
+                first_layer_weight_sum = next(transform_net.parameters()).sum().item()
+                print(f"Step {global_step} - Weight Signature: {first_layer_weight_sum:.6f}")
 
             global_step += 1
 
@@ -162,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
     parser.add_argument("--content_weight", type=float, default=1.0, help="Weight for content loss.")
-    parser.add_argument("--style_weight", type=float, default=100000.0, help="Weight for style loss.")
+    parser.add_argument("--style_weight", type=float, default=1000000.0, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-4, help="Weight for total variation loss.")
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
@@ -189,3 +193,4 @@ if __name__ == "__main__":
         checkpoint_dir=args.checkpoint_dir,
         resume_checkpoint=args.resume_checkpoint,
     )
+

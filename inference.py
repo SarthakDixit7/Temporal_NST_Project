@@ -40,6 +40,7 @@ def infer(content_path, checkpoint_path, output_path, resolution):
         with autocast_context:
             generated = model(content_tensor)
 
+    generated = (generated + 1.0) / 2.0
     generated = generated.clamp(0.0, 1.0)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,13 +53,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--content_path",
         type=str,
-        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000000839.jpg",
+        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000008841.jpg",
         help="Path to the input content image.",
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_10373.pth",
+        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_28246.pth",
         help="Path to a .pth checkpoint.",
     )
     parser.add_argument(
