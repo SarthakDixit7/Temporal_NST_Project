@@ -14,6 +14,11 @@ python -m utils.data_download --wikiart --out data --wikiart-urls data/wikiart_u
 # python -m utils.data_download --coco --out data
 ```
 
+Style image requirement:
+- Place your target style image (e.g. Starry Night) in your `--style_dir`.
+- The loader automatically caps the style image longest side at **512 pixels** before the 256x256 training resize.
+- Do **not** feed 4K style images directly; the VGG receptive field will fail to capture macro brushstrokes.
+
 Test dataloaders:
 ```
 python train.py

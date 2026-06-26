@@ -19,6 +19,17 @@ def _list_images(folder: str) -> List[str]:
     return files
 
 
+def _resize_longest_side(img: Image.Image, max_longest_side: int = 512) -> Image.Image:
+    """Scale image so its longest side is at most `max_longest_side` pixels."""
+    width, height = img.size
+    longest = max(width, height)
+    if longest <= max_longest_side:
+        return img
+    scale = max_longest_side / longest
+    new_size = (int(width * scale), int(height * scale))
+    return img.resize(new_size, Image.BICUBIC)
+
+
 class CocoDataset(Dataset):
     """Simple Dataset for MS-COCO images stored in a directory.
 
@@ -49,17 +60,25 @@ class CocoDataset(Dataset):
 
 
 class StyleDataset(Dataset):
-    """Dataset for style reference images (WikiArt subset).
+    """Dataset for style reference images.
 
-    Expects images under `root_dir` (e.g. `data/wikiart_subset`).
-    Applies the same resize and ToTensor transform by default.
+    CRITICAL: Style images must be downscaled so their longest side is ~512 px
+    before the final 256x256 training resize. Feeding 4K style images directly
+    prevents the VGG receptive field from capturing macro brushstrokes (e.g.
+    Van Gogh swirls). Place your target style (e.g. Starry Night) in the
+    style directory at reasonable resolution; this loader enforces the cap.
     """
+
+    STYLE_MAX_LONGEST_SIDE = 512
 
     def __init__(self, root_dir: str, transform=None):
         self.root_dir = root_dir
         self.files = _list_images(root_dir)
         if transform is None:
             self.transform = transforms.Compose([
+                transforms.Lambda(
+                    lambda img: _resize_longest_side(img, self.STYLE_MAX_LONGEST_SIDE)
+                ),
                 transforms.Resize((256, 256)),
                 transforms.ToTensor(),
             ])
