@@ -12,3 +12,4 @@ pycocotools
 Pillow
 datasets
 huggingface-hub
+realesrgan
