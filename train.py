@@ -17,10 +17,7 @@ from torch.utils.data import DataLoader
 from config import CHECKPOINT_ROOT, DATA_ROOT
 from data.dataset import CocoDataset, StyleDataset
 from models.transform_net import TransformNetwork
-from models.vgg_loss import VGG16LossNetwork, gram_matrix
-
-
-STYLE_LAYERS = ["relu1_2", "relu2_2", "relu3_3", "relu4_3", "relu5_1"]
+from models.vgg_loss import VGG19LossNetwork, gram_matrix
 
 
 def make_dataloaders(
@@ -61,9 +58,9 @@ def train(
     epochs=1,
     batch_size=8,
     num_workers=4,
-    content_weight=1000,
+    content_weight=1000.0,
     style_weight=1e10,
-    tv_weight=1e-5,
+    tv_weight=1e-3,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
     resume_checkpoint=None,
@@ -84,7 +81,7 @@ def train(
         global_step = int(match.group(1))
         print(f"Resuming training from checkpoint {resume_path} at step {global_step}")
 
-    vgg = VGG16LossNetwork().to(device)
+    vgg = VGG19LossNetwork().to(device)
     vgg.eval()
 
     for param in vgg.parameters():
@@ -99,6 +96,15 @@ def train(
     style_iter = cycle(style_loader)
 
     transform_net.train()
+
+    layer_weights = {
+        "relu1_2": 0.0,
+        "relu2_2": 0.0,
+        "relu3_3": 1.0,
+        "relu4_3": 20.0,
+        "relu5_1": 40.0,
+    }
+    style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3", "relu5_1"]
 
     for epoch in range(epochs):
         for content_images in coco_loader:
@@ -121,10 +127,12 @@ def train(
             content_loss = mse_loss(generated_content, content_target)
 
             style_loss = torch.zeros((), device=device, dtype=torch.float32)
-            for layer_name in STYLE_LAYERS:
+            for layer_name in style_layers:
                 generated_gram = gram_matrix(generated_styles[layer_name])
                 target_gram = gram_matrix(style_targets[layer_name])
-                style_loss = style_loss + mse_loss(generated_gram, target_gram)
+                style_loss = style_loss + (
+                    layer_weights[layer_name] * mse_loss(generated_gram, target_gram)
+                )
 
             total_variation = tv_loss(mapped_generated_images.float())
             loss = (content_weight * content_loss) + (style_weight * style_loss) + (tv_weight * total_variation)
@@ -159,14 +167,14 @@ if __name__ == "__main__":
         "--style_dir",
         type=str,
         default="/mnt/fast0/sd2885/data/my_style/",
-        help="Path to the style dataset. Style images are capped at 512px longest side.",
+        help="Path to the style dataset (WikiArt).",
     )
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
-    parser.add_argument("--content_weight", type=float, default=1000, help="Weight for content loss.")
+    parser.add_argument("--content_weight", type=float, default=1000.0, help="Weight for content loss.")
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
-    parser.add_argument("--tv_weight", type=float, default=1e-5, help="Weight for total variation loss.")
+    parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
     )

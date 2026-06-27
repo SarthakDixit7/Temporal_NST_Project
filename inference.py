@@ -84,7 +84,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_33000.pth",
+        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_10373.pth",
         help="Path to a .pth checkpoint.",
     )
     parser.add_argument(
