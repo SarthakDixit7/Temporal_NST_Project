@@ -125,13 +125,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_img",
         type=str,
-        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000002150.jpg",
+        default="/mnt/fast0/sd2885/data/train2014/train2014/COCO_train2014_000000000092.jpg",
         help="Path to the input content image (may be up to 4K resolution)."
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_10373.pth",
+        default="/mnt/fast0/sd2885/checkpoints/transform_net_iter_31119.pth",
         help="Path to the trained TransformNetwork checkpoint (.pth)."
     )
     parser.add_argument(
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--medium_size",
         type=int,
-        default=1024,
+        default=512,
         help="Size of the longest edge for the medium-resolution stylization step (default: 1024)."
     )
     parser.add_argument(
