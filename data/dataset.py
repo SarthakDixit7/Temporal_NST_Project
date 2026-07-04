@@ -30,6 +30,28 @@ def _resize_longest_side(img: Image.Image, max_longest_side: int = 512) -> Image
     return img.resize(new_size, Image.BICUBIC)
 
 
+def _list_frame_pairs(root_dir: str) -> List[tuple[str, str]]:
+    """Collect consecutive frame pairs grouped by sequence directory."""
+    root = Path(root_dir)
+    if not root.exists():
+        return []
+
+    allowed_suffixes = {".jpg", ".jpeg", ".png", ".bmp"}
+    sequence_frames = {}
+
+    for frame_path in root.rglob("*"):
+        if frame_path.is_file() and frame_path.suffix.lower() in allowed_suffixes:
+            sequence_frames.setdefault(frame_path.parent, []).append(frame_path)
+
+    pairs: List[tuple[str, str]] = []
+    for sequence_dir in sorted(sequence_frames):
+        frames = sorted(sequence_frames[sequence_dir])
+        for previous_frame, current_frame in zip(frames[:-1], frames[1:]):
+            pairs.append((str(previous_frame), str(current_frame)))
+
+    return pairs
+
+
 class CocoDataset(Dataset):
     """Simple Dataset for MS-COCO images stored in a directory.
 
@@ -94,3 +116,37 @@ class StyleDataset(Dataset):
             img = img.convert("RGB")
             img = self.transform(img)
         return img
+
+
+class VideoDataset(Dataset):
+    """Sequential video dataset returning consecutive frame pairs."""
+
+    def __init__(self, root_dir: str, transform=None):
+        self.root_dir = root_dir
+        self.pairs = _list_frame_pairs(root_dir)
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ])
+        else:
+            self.transform = transform
+
+        if not self.pairs:
+            raise ValueError(f"No consecutive frame pairs found under: {root_dir}")
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, idx):
+        previous_path, current_path = self.pairs[idx]
+
+        with Image.open(previous_path) as previous_frame:
+            previous_frame = previous_frame.convert("RGB")
+            previous_frame = self.transform(previous_frame)
+
+        with Image.open(current_path) as current_frame:
+            current_frame = current_frame.convert("RGB")
+            current_frame = self.transform(current_frame)
+
+        return previous_frame, current_frame

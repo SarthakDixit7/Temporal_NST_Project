@@ -1,6 +1,4 @@
-
 import os
-import re
 
 os.environ["TORCH_HOME"] = "/mnt/fast0/sd2885/cache/"
 
@@ -10,32 +8,33 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from config import CHECKPOINT_ROOT, DATA_ROOT
-from data.dataset import CocoDataset, StyleDataset
+from config import CHECKPOINT_ROOT, STYLE_ROOT, VIDEO_ROOT
+from data.dataset import StyleDataset, VideoDataset
+from models.temporal import compute_occlusion_mask, load_frozen_raft, warp_image
 from models.transform_net import TransformNetwork
 from models.vgg_loss import VGG19LossNetwork, gram_matrix
 
 
 def make_dataloaders(
-    coco_root,
+    video_root,
     style_root,
     batch_size=4,
     num_workers=0,
 ):
-    coco_ds = CocoDataset(coco_root)
+    video_ds = VideoDataset(video_root)
     style_ds = StyleDataset(style_root)
 
-    coco_loader = DataLoader(
-        coco_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
+    video_loader = DataLoader(
+        video_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True
     )
     style_loader = DataLoader(
         style_ds, batch_size=1, shuffle=True, num_workers=num_workers, drop_last=False
     )
-    return coco_loader, style_loader
+    return video_loader, style_loader
 
 
 def tv_loss(image_batch):
@@ -61,88 +60,90 @@ def train(
     content_weight=1000.0,
     style_weight=1e10,
     tv_weight=1e-3,
+    temporal_weight=1000.0,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
-    resume_checkpoint=None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
+    use_amp = device.type == "cuda"
+    scaler = GradScaler(enabled=use_amp)
+
     transform_net = TransformNetwork().to(device)
-
-    global_step = 0
-    if resume_checkpoint is not None:
-        resume_path = Path(resume_checkpoint)
-        transform_net.load_state_dict(torch.load(resume_path, map_location=device))
-        match = re.search(r"transform_net_iter_(\d+)\.pth$", resume_path.name)
-        if match is None:
-            raise ValueError(
-                f"Could not infer training step from checkpoint filename: {resume_path.name}"
-            )
-        global_step = int(match.group(1))
-        print(f"Resuming training from checkpoint {resume_path} at step {global_step}")
-
     vgg = VGG19LossNetwork().to(device)
+    raft = load_frozen_raft().to(device)
+
     vgg.eval()
+    raft.eval()
 
     for param in vgg.parameters():
         param.requires_grad = False
 
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
-    mse_loss = nn.MSELoss()
+    mse_loss = nn.MSELoss(reduction="mean")
 
-    coco_loader, style_loader = make_dataloaders(
-        coco_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
+    video_loader, style_loader = make_dataloaders(
+        video_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
     )
     style_iter = cycle(style_loader)
 
     transform_net.train()
 
-    layer_weights = {
-        "relu1_2": 0.0,
-        "relu2_2": 0.0,
-        "relu3_3": 1.0,
-        "relu4_3": 20.0,
-        "relu5_1": 40.0,
-    }
-    style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3", "relu5_1"]
+    style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
+    global_step = 0
 
     for epoch in range(epochs):
-        for content_images in coco_loader:
+        for frame_t_minus_1, frame_t in video_loader:
             style_images = next(style_iter)
 
-            content_images = content_images.to(device)
+            frame_t_minus_1 = frame_t_minus_1.to(device)
+            frame_t = frame_t.to(device)
             style_images = style_images.to(device)
+            if style_images.shape[0] == 1 and frame_t.shape[0] > 1:
+                style_images = style_images.expand(frame_t.shape[0], -1, -1, -1).contiguous()
 
             optimizer.zero_grad(set_to_none=True)
 
-            generated_images = transform_net(content_images)
-            mapped_generated_images = (generated_images + 1.0) / 2.0
-
             with torch.no_grad():
-                content_target, _ = vgg(content_images.float())
-                _, style_targets = vgg(style_images.float())
+                with autocast(enabled=use_amp):
+                    flow_forward = raft(frame_t_minus_1, frame_t)[-1]
+                    flow_backward = raft(frame_t, frame_t_minus_1)[-1]
+                    occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
 
-            generated_content, generated_styles = vgg(mapped_generated_images.float())
+            with autocast(enabled=use_amp):
+                y_prev = transform_net(frame_t_minus_1)
+                y_curr = transform_net(frame_t)
+                warped_y_prev = warp_image(y_prev, flow_forward)
 
-            content_loss = mse_loss(generated_content, content_target)
+                content_target, _ = vgg(frame_t)
+                _, style_targets = vgg(style_images)
+                stylized_curr_for_vgg = (y_curr + 1.0) / 2.0
+                generated_content, generated_styles = vgg(stylized_curr_for_vgg)
+
+            content_loss = mse_loss(generated_content.float(), content_target.float())
 
             style_loss = torch.zeros((), device=device, dtype=torch.float32)
             for layer_name in style_layers:
                 generated_gram = gram_matrix(generated_styles[layer_name])
                 target_gram = gram_matrix(style_targets[layer_name])
-                style_loss = style_loss + (
-                    layer_weights[layer_name] * mse_loss(generated_gram, target_gram)
-                )
+                style_loss = style_loss + mse_loss(generated_gram.float(), target_gram.float())
 
-            total_variation = tv_loss(mapped_generated_images.float())
-            loss = (content_weight * content_loss) + (style_weight * style_loss) + (tv_weight * total_variation)
+            tv_penalty = tv_loss(stylized_curr_for_vgg.float())
+            temporal_loss = mse_loss(
+                occlusion_mask.float() * y_curr.float(),
+                occlusion_mask.float() * warped_y_prev.float(),
+            )
 
-            loss.backward()
-            optimizer.step()
+            loss = (
+                (content_weight * content_loss)
+                + (style_weight * style_loss)
+                + (tv_weight * tv_penalty)
+                + (temporal_weight * temporal_loss)
+            )
 
-            if global_step % 10 == 0:
-                first_layer_weight_sum = next(transform_net.parameters()).sum().item()
-                print(f"Step {global_step} - Weight Signature: {first_layer_weight_sum:.6f}")
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             global_step += 1
 
@@ -152,8 +153,9 @@ def train(
             print(
                 f"epoch={epoch + 1} step={global_step} "
                 f"content={content_loss.item():.4f} "
-                f"style={(style_weight * style_loss).item():.4f} "
-                f"tv={total_variation.item():.4f} total={loss.item():.4f}"
+                f"style={style_loss.item():.4f} "
+                f"tv={tv_penalty.item():.4f} "
+                f"temporal={temporal_loss.item():.4f} total={loss.item():.4f}"
             )
 
     save_checkpoint(transform_net, checkpoint_dir, global_step)
@@ -161,12 +163,17 @@ def train(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a neural style transfer model.")
-    parser.add_argument("--dataset_dir", type=str, default=DATA_ROOT, help="Path to the COCO dataset.")
+    parser = argparse.ArgumentParser(description="Train a temporal neural style transfer model.")
+    parser.add_argument(
+        "--dataset_dir",
+        type=str,
+        default=VIDEO_ROOT,
+        help="Path to the sequential video frame dataset (MPI Sintel).",
+    )
     parser.add_argument(
         "--style_dir",
         type=str,
-        default="/mnt/fast0/sd2885/data/my_style/",
+        default=STYLE_ROOT,
         help="Path to the style dataset (WikiArt).",
     )
     parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
@@ -176,14 +183,13 @@ if __name__ == "__main__":
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
+        "--temporal_weight", type=float, default=1000.0, help="Weight for temporal consistency loss."
+    )
+    parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
     )
-    parser.add_argument("--checkpoint_dir", type=str, default=CHECKPOINT_ROOT, help="Directory to save checkpoints.")
     parser.add_argument(
-        "--resume_checkpoint",
-        type=str,
-        default=None,
-        help="Path to a .pth checkpoint to resume training from.",
+        "--checkpoint_dir", type=str, default=CHECKPOINT_ROOT, help="Directory to save checkpoints."
     )
 
     args = parser.parse_args()
@@ -196,7 +202,7 @@ if __name__ == "__main__":
         content_weight=args.content_weight,
         style_weight=args.style_weight,
         tv_weight=args.tv_weight,
+        temporal_weight=args.temporal_weight,
         checkpoint_interval=args.checkpoint_interval,
         checkpoint_dir=args.checkpoint_dir,
-        resume_checkpoint=args.resume_checkpoint,
     )
