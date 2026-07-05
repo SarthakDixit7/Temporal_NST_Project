@@ -126,7 +126,8 @@ class VideoDataset(Dataset):
         self.pairs = _list_frame_pairs(root_dir)
         if transform is None:
             self.transform = transforms.Compose([
-                transforms.Resize((256, 256)),
+                transforms.Resize(256),
+                transforms.CenterCrop(256),
                 transforms.ToTensor(),
             ])
         else:

@@ -106,8 +106,8 @@ def train(
 
             with torch.no_grad():
                 with autocast(enabled=use_amp):
-                    flow_forward = raft(frame_t_minus_1, frame_t)[-1]
-                    flow_backward = raft(frame_t, frame_t_minus_1)[-1]
+                    flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
+                    flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
                     occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
 
             with autocast(enabled=use_amp):
@@ -128,7 +128,7 @@ def train(
                 target_gram = gram_matrix(style_targets[layer_name])
                 style_loss = style_loss + mse_loss(generated_gram.float(), target_gram.float())
 
-            tv_penalty = tv_loss(stylized_curr_for_vgg.float())
+            tv_penalty = tv_loss(stylized_curr_for_vgg.float()) 
             temporal_loss = mse_loss(
                 occlusion_mask.float() * y_curr.float(),
                 occlusion_mask.float() * warped_y_prev.float(),
