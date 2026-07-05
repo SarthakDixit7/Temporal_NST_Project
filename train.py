@@ -176,7 +176,7 @@ if __name__ == "__main__":
         default=STYLE_ROOT,
         help="Path to the style dataset (WikiArt).",
     )
-    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs.")
+    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
     parser.add_argument("--content_weight", type=float, default=1000.0, help="Weight for content loss.")
