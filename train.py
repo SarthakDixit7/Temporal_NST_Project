@@ -183,7 +183,7 @@ if __name__ == "__main__":
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
-        "--temporal_weight", type=float, default=1000.0, help="Weight for temporal consistency loss."
+        "--temporal_weight", type=float, default=1e6, help="Weight for temporal consistency loss."
     )
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."

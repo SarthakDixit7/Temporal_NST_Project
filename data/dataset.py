@@ -151,3 +151,31 @@ class VideoDataset(Dataset):
             current_frame = self.transform(current_frame)
 
         return previous_frame, current_frame
+
+class SingleFrameVideoDataset(Dataset):
+    """Dataset for video frames loaded individually."""
+
+    def __init__(self, root_dir: str, transform=None):
+        self.root_dir = root_dir
+        self.files = _list_images(root_dir)
+        if transform is None:
+            self.transform = transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(256),
+                transforms.ToTensor(),
+            ])
+        else:
+            self.transform = transform
+
+        if not self.files:
+            raise ValueError(f"No frames found under: {root_dir}")
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        img_path = self.files[idx]
+        with Image.open(img_path) as img:
+            img = img.convert("RGB")
+            img = self.transform(img)
+        return img
