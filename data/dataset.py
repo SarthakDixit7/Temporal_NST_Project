@@ -101,7 +101,7 @@ class StyleDataset(Dataset):
                 transforms.Lambda(
                     lambda img: _resize_longest_side(img, self.STYLE_MAX_LONGEST_SIDE)
                 ),
-                transforms.Resize((256, 256)),
+                transforms.RandomCrop(256, pad_if_needed=True),
                 transforms.ToTensor(),
             ])
         else:

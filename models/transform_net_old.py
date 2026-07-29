@@ -62,11 +62,13 @@ class TransformNetwork(nn.Module):
             ResidualBlock(128),
             ResidualBlock(128),
 
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Upsample(scale_factor=2.0, mode='nearest'),
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
             nn.InstanceNorm2d(64, affine=True),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Upsample(scale_factor=2.0, mode='nearest'),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
             nn.InstanceNorm2d(32, affine=True),
             nn.ReLU(inplace=True),
 

@@ -63,6 +63,7 @@ def train(
     temporal_weight=1000.0,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
+    style_mode=None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
@@ -89,7 +90,15 @@ def train(
 
     transform_net.train()
 
-    style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
+    if style_mode == 'pointillism':
+        tv_weight = 0.0
+        style_layers = ["relu1_2", "relu2_2", "relu3_3"]
+    elif style_mode == 'impressionism':
+        tv_weight = 1e-3
+        style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_1", "relu5_1"]
+    else:
+        style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
+
     global_step = 0
 
     for epoch in range(epochs):
@@ -150,12 +159,19 @@ def train(
             if checkpoint_interval and global_step % checkpoint_interval == 0:
                 save_checkpoint(transform_net, checkpoint_dir, global_step)
 
+            # Calculate weighted components for logging
+            weighted_content = content_weight * content_loss.item()
+            weighted_style = style_weight * style_loss.item()
+            weighted_tv = tv_weight * tv_penalty.item()
+            weighted_temporal = temporal_weight * temporal_loss.item()
+
             print(
                 f"epoch={epoch + 1} step={global_step} "
-                f"content={content_loss.item():.4f} "
-                f"style={style_loss.item():.4f} "
-                f"tv={tv_penalty.item():.4f} "
-                f"temporal={temporal_loss.item():.4f} total={loss.item():.4f}"
+                f"content={weighted_content:.4f} "
+                f"style={weighted_style:.4f} "
+                f"tv={weighted_tv:.4f} "
+                f"temporal={weighted_temporal:.4f} "
+                f"total={loss.item():.4f}"
             )
 
     save_checkpoint(transform_net, checkpoint_dir, global_step)
@@ -179,7 +195,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
-    parser.add_argument("--content_weight", type=float, default=1000.0, help="Weight for content loss.")
+    parser.add_argument("--content_weight", type=float, default=10000.0, help="Weight for content loss.")
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
@@ -190,6 +206,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--checkpoint_dir", type=str, default=CHECKPOINT_ROOT, help="Directory to save checkpoints."
+    )
+    parser.add_argument(
+        "--style_mode", type=str, choices=["pointillism", "impressionism"], default=None,
+        help="Dynamic configuration for specific artistic styles."
     )
 
     args = parser.parse_args()
@@ -205,4 +225,5 @@ if __name__ == "__main__":
         temporal_weight=args.temporal_weight,
         checkpoint_interval=args.checkpoint_interval,
         checkpoint_dir=args.checkpoint_dir,
+        style_mode=args.style_mode,
     )

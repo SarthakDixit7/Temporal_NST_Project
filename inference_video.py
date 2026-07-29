@@ -71,71 +71,83 @@ def stylize_high_res_video(checkpoint_path, input_video_path, output_video_path,
     print(f"[*] Original Video: {orig_width}x{orig_height} @ {fps}fps | Total Frames: {total_frames}")
     print(f"[*] Neural Network Processing Size: {scaled_width}x{scaled_height} (Longest edge: {max_size})")
     
+    output_path = Path(output_video_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     # CRITICAL: The output video MUST match the original 4K/1080p dimensions!
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (orig_width, orig_height))
+    out = cv2.VideoWriter(str(output_path), fourcc, fps if fps > 0 else 30.0, (orig_width, orig_height))
+    if not out.isOpened():
+        raise RuntimeError(
+            f"Error opening video writer for {output_path}. "
+            "Try a different codec or verify that OpenCV has FFMPEG support."
+        )
 
     frame_count = 0
     start_time = time.time()
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+            # 1. Convert BGR (OpenCV) to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # 2. DOWNSCALE (Process Medium) to make brushstrokes thick
+            small_frame = cv2.resize(frame_rgb, (scaled_width, scaled_height), interpolation=cv2.INTER_AREA)
+            
+            # 3. STYLIZE
+            # Convert to tensor, scale to [0, 1], add batch dimension, and move to GPU
+            frame_tensor = to_tensor(small_frame).unsqueeze(0).to(device)
 
-        # 1. Convert BGR (OpenCV) to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # 2. DOWNSCALE (Process Medium) to make brushstrokes thick
-        small_frame = cv2.resize(frame_rgb, (scaled_width, scaled_height), interpolation=cv2.INTER_AREA)
-        
-        # 3. STYLIZE
-        # Convert to tensor, scale to [0, 1], add batch dimension, and move to GPU
-        frame_tensor = to_tensor(small_frame).unsqueeze(0).to(device)
+            # Pass through network (Outputs [-1.0, 1.0])
+            stylized_tensor = model(frame_tensor)
 
-        # Pass through network (Outputs [-1.0, 1.0])
-        stylized_tensor = model(frame_tensor)
+            # Shift back to [0.0, 1.0] and clamp
+            stylized_tensor = (stylized_tensor + 1.0) / 2.0
+            stylized_tensor = stylized_tensor.clamp(0, 1)
 
-        # Shift back to [0.0, 1.0] and clamp
-        stylized_tensor = (stylized_tensor + 1.0) / 2.0
-        stylized_tensor = stylized_tensor.clamp(0, 1)
+            # Convert back to Numpy array and HWC format
+            stylized_frame = stylized_tensor.squeeze(0).cpu().numpy()
+            stylized_frame = stylized_frame.transpose(1, 2, 0)
+            
+            # Convert [0, 1] float back to [0, 255] uint8
+            stylized_frame_uint8 = (stylized_frame * 255.0).astype("uint8")
 
-        # Convert back to Numpy array and HWC format
-        stylized_frame = stylized_tensor.squeeze(0).cpu().numpy()
-        stylized_frame = stylized_frame.transpose(1, 2, 0)
-        
-        # Convert [0, 1] float back to [0, 255] uint8
-        stylized_frame_uint8 = (stylized_frame * 255.0).astype("uint8")
+            # 4. UPSCALE HIGH (Back to original dimensions)
+            if upsampler is not None:
+                # RealESRGAN expects BGR
+                stylized_bgr = cv2.cvtColor(stylized_frame_uint8, cv2.COLOR_RGB2BGR)
+                upscaled_bgr, _ = upsampler.enhance(stylized_bgr, outscale=4)
+                # Resize back to exact original dimensions
+                final_frame_bgr = cv2.resize(upscaled_bgr, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
+            else:
+                upscaled_frame = cv2.resize(stylized_frame_uint8, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
+                final_frame_bgr = cv2.cvtColor(upscaled_frame, cv2.COLOR_RGB2BGR)
 
-        # 4. UPSCALE HIGH (Back to original dimensions)
-        if upsampler is not None:
-            # RealESRGAN expects BGR
-            stylized_bgr = cv2.cvtColor(stylized_frame_uint8, cv2.COLOR_RGB2BGR)
-            upscaled_bgr, _ = upsampler.enhance(stylized_bgr, outscale=4)
-            # Resize back to exact original dimensions
-            final_frame_bgr = cv2.resize(upscaled_bgr, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
-        else:
-            upscaled_frame = cv2.resize(stylized_frame_uint8, (orig_width, orig_height), interpolation=cv2.INTER_CUBIC)
-            final_frame_bgr = cv2.cvtColor(upscaled_frame, cv2.COLOR_RGB2BGR)
+            out.write(final_frame_bgr)
 
-        out.write(final_frame_bgr)
+            frame_count += 1
+            if frame_count % 10 == 0:
+                elapsed = time.time() - start_time
+                fps_processing = frame_count / elapsed
+                print(f"Processed {frame_count}/{total_frames} frames ({fps_processing:.2f} fps)")
+    finally:
+        cap.release()
+        out.release()
 
-        frame_count += 1
-        if frame_count % 10 == 0:
-            elapsed = time.time() - start_time
-            fps_processing = frame_count / elapsed
-            print(f"Processed {frame_count}/{total_frames} frames ({fps_processing:.2f} fps)")
+    if frame_count == 0:
+        raise RuntimeError("No frames were processed. Check the input video and codec support.")
 
-    cap.release()
-    out.release()
-    print(f"[*] Finished! High-Res stylized video saved to {output_video_path}")
+    print(f"[*] Finished! High-Res stylized video saved to {output_path}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="High-Res Video Inference Pipeline (Downscale -> Stylize -> Upscale)")
     parser.add_argument("--checkpoint", type=str, required=True, help="/mnt/fast0/sd2885/checkpoints/transform_net_iter_39000.pth")
-    parser.add_argument("--input", type=str, required=True, help="/homes/sd2885/Temporal_NST_Project/Boxing.mp4.mp4")
-    parser.add_argument("--output", type=str, default="/mnt/fast0/sd2885/output/Boxing_1024.mp4", help="Path to save output .mp4 video")
+    parser.add_argument("--input", type=str, required=True, help="/homes/sd2885/Temporal_NST_Project/Family_guy.mp4")
+    parser.add_argument("--output", type=str, default="/mnt/fast0/sd2885/output/Family_guy_1024.mp4", help="Path to save output .mp4 video")
     parser.add_argument("--max_size", type=int, default=1024, help="Max size for longest edge during Neural Net processing")
     
     args = parser.parse_args()
