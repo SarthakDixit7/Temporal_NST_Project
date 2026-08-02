@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -57,7 +57,7 @@ def train(
     epochs=1,
     batch_size=8,
     num_workers=4,
-    content_weight=1000.0,
+    content_weight=10000.0,
     style_weight=1e10,
     tv_weight=1e-3,
     temporal_weight=1000.0,
@@ -67,7 +67,7 @@ def train(
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
-    use_amp = device.type == "cuda"
+    use_amp = False
     scaler = GradScaler(enabled=use_amp)
 
     transform_net = TransformNetwork().to(device)
@@ -114,20 +114,18 @@ def train(
             optimizer.zero_grad(set_to_none=True)
 
             with torch.no_grad():
-                with autocast(enabled=use_amp):
-                    flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
-                    flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
-                    occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
+                flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
+                flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
+                occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
 
-            with autocast(enabled=use_amp):
-                y_prev = transform_net(frame_t_minus_1)
-                y_curr = transform_net(frame_t)
-                warped_y_prev = warp_image(y_prev, flow_forward)
+            y_prev = transform_net(frame_t_minus_1)
+            y_curr = transform_net(frame_t)
+            warped_y_prev = warp_image(y_prev, flow_forward)
 
-                content_target, _ = vgg(frame_t)
-                _, style_targets = vgg(style_images)
-                stylized_curr_for_vgg = (y_curr + 1.0) / 2.0
-                generated_content, generated_styles = vgg(stylized_curr_for_vgg)
+            content_target, _ = vgg(frame_t)
+            _, style_targets = vgg(style_images)
+            stylized_curr_for_vgg = (y_curr + 1.0) / 2.0
+            generated_content, generated_styles = vgg(stylized_curr_for_vgg)
 
             content_loss = mse_loss(generated_content.float(), content_target.float())
 
@@ -192,14 +190,14 @@ if __name__ == "__main__":
         default=STYLE_ROOT,
         help="Path to the style dataset (WikiArt).",
     )
-    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
+    parser.add_argument("--epochs", type=int, default=600, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
     parser.add_argument("--content_weight", type=float, default=10000.0, help="Weight for content loss.")
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
-        "--temporal_weight", type=float, default=1e6, help="Weight for temporal consistency loss."
+        "--temporal_weight", type=float, default=1e5, help="Weight for temporal consistency loss."
     )
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."

@@ -9,7 +9,8 @@ def gram_matrix(input):
     b, c, h, w = input.size()
     features = input.view(b, c, h * w).to(torch.float32)
     G = torch.bmm(features, features.transpose(1, 2))
-    return G.div(c * h * w)
+    normalizer = float(c * h * w)
+    return G.div(normalizer)
 
 
 def _replace_maxpool_with_avgpool(vgg):
