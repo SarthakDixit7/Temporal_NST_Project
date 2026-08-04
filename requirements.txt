@@ -13,3 +13,4 @@ Pillow
 datasets
 huggingface-hub
 realesrgan
+lpips

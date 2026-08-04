@@ -1,4 +1,5 @@
 import argparse
+import re
 import time
 from pathlib import Path
 
@@ -27,6 +28,23 @@ def calculate_scaled_dimensions(width, height, max_size=1024):
     new_height = int(height * scale)
     return new_width, new_height
 
+
+def find_latest_checkpoint(checkpoint_dir):
+    checkpoint_dir = Path(checkpoint_dir)
+    if not checkpoint_dir.exists():
+        return None
+
+    checkpoints = list(checkpoint_dir.glob("transform_net_iter_*.pth"))
+    if not checkpoints:
+        return None
+
+    def parse_step(path):
+        match = re.search(r"transform_net_iter_(\d+)\.pth$", path.name)
+        return int(match.group(1)) if match else -1
+
+    latest = max(checkpoints, key=parse_step)
+    return latest if parse_step(latest) >= 0 else None
+
 @torch.no_grad()
 def stylize_high_res_video(checkpoint_path, input_video_path, output_video_path, max_size=1024, device="cuda"):
     """
@@ -36,7 +54,11 @@ def stylize_high_res_video(checkpoint_path, input_video_path, output_video_path,
     print(f"[*] Loading model from {checkpoint_path}...")
     
     model = TransformNetwork().to(device)
-    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    # Support both checkpoint formats:
+    # 1) legacy: raw model state_dict
+    # 2) new: dict with model_state_dict/optimizer_state_dict/global_step
+    state_dict = checkpoint["model_state_dict"] if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint else checkpoint
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -145,12 +167,20 @@ def stylize_high_res_video(checkpoint_path, input_video_path, output_video_path,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="High-Res Video Inference Pipeline (Downscale -> Stylize -> Upscale)")
-    parser.add_argument("--checkpoint", type=str, required=True, help="/mnt/fast0/sd2885/checkpoints/transform_net_iter_39000.pth")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Explicit checkpoint path. If omitted, latest in --checkpoint_dir is used.")
+    parser.add_argument("--checkpoint_dir", type=str, default="/mnt/fast0/sd2885/checkpoints", help="Directory to search for latest checkpoint when --checkpoint is omitted.")
     parser.add_argument("--input", type=str, required=True, help="/homes/sd2885/Temporal_NST_Project/Family_guy.mp4")
     parser.add_argument("--output", type=str, default="/mnt/fast0/sd2885/output/Family_guy_1024.mp4", help="Path to save output .mp4 video")
     parser.add_argument("--max_size", type=int, default=1024, help="Max size for longest edge during Neural Net processing")
     
     args = parser.parse_args()
+
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint else find_latest_checkpoint(args.checkpoint_dir)
+    if checkpoint_path is None or not Path(checkpoint_path).exists():
+        raise FileNotFoundError(
+            f"No checkpoint found. checkpoint={args.checkpoint} checkpoint_dir={args.checkpoint_dir}"
+        )
+    print(f"[*] Using checkpoint: {checkpoint_path}")
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    stylize_high_res_video(args.checkpoint, args.input, args.output, args.max_size, device)
+    stylize_high_res_video(str(checkpoint_path), args.input, args.output, args.max_size, device)

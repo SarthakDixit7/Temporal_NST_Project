@@ -102,6 +102,7 @@ class VGG19LossNetwork(nn.Module):
             "relu1_2": 3,
             "relu2_2": 8,
             "relu3_3": 15,
+            "relu4_1": 20,
             "relu4_3": 24,
             "relu5_1": 29,
         }
@@ -121,6 +122,8 @@ class VGG19LossNetwork(nn.Module):
                 style_features["relu2_2"] = x
             elif idx == self.layer_map["relu3_3"]:
                 style_features["relu3_3"] = x
+            elif idx == self.layer_map["relu4_1"]:
+                style_features["relu4_1"] = x
             elif idx == self.layer_map["relu4_3"]:
                 style_features["relu4_3"] = x
             elif idx == self.layer_map["relu5_1"]:

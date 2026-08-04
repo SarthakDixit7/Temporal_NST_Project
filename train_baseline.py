@@ -1,4 +1,5 @@
 import os
+import re
 
 os.environ["TORCH_HOME"] = "/mnt/fast0/sd2885/cache/"
 
@@ -8,7 +9,6 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -42,12 +42,58 @@ def tv_loss(image_batch):
     return horizontal + vertical
 
 
-def save_checkpoint(model, checkpoint_dir, iteration):
+def save_checkpoint(model, optimizer, checkpoint_dir, iteration):
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = checkpoint_dir / f"transform_net_iter_{iteration}.pth"
-    torch.save(model.state_dict(), checkpoint_path)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+            "global_step": int(iteration),
+        },
+        checkpoint_path,
+    )
     return checkpoint_path
+
+
+def find_latest_checkpoint(checkpoint_dir):
+    checkpoint_dir = Path(checkpoint_dir)
+    if not checkpoint_dir.exists():
+        return None
+
+    checkpoints = list(checkpoint_dir.glob("transform_net_iter_*.pth"))
+    if not checkpoints:
+        return None
+
+    def parse_step(path):
+        match = re.search(r"transform_net_iter_(\d+)\.pth$", path.name)
+        return int(match.group(1)) if match else -1
+
+    latest = max(checkpoints, key=parse_step)
+    if parse_step(latest) < 0:
+        return None
+    return latest
+
+
+def parse_step_from_checkpoint_path(checkpoint_path):
+    match = re.search(r"transform_net_iter_(\d+)\.pth$", str(checkpoint_path))
+    return int(match.group(1)) if match else 0
+
+
+def load_checkpoint(model, optimizer, checkpoint_path, device):
+    payload = torch.load(checkpoint_path, map_location=device)
+
+    # Backward compatibility: older checkpoints in this project store only model state_dict.
+    if isinstance(payload, dict) and "model_state_dict" in payload:
+        model.load_state_dict(payload["model_state_dict"])
+        if optimizer is not None and "optimizer_state_dict" in payload:
+            optimizer.load_state_dict(payload["optimizer_state_dict"])
+        saved_step = int(payload.get("global_step", 0))
+        return saved_step if saved_step > 0 else parse_step_from_checkpoint_path(checkpoint_path)
+
+    model.load_state_dict(payload)
+    return parse_step_from_checkpoint_path(checkpoint_path)
 
 
 def train(
@@ -56,16 +102,17 @@ def train(
     epochs=1,
     batch_size=8,
     num_workers=4,
-    content_weight=1000.0,
+    content_weight=5000.0,
     style_weight=1e10,
     tv_weight=1e-3,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints_baseline",
+    style_mode=None,
+    resume=False,
+    resume_checkpoint=None,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.backends.cudnn.benchmark = True
-    use_amp = device.type == "cuda"
-    scaler = GradScaler(enabled=use_amp)
 
     transform_net = TransformNetwork().to(device)
     vgg = VGG19LossNetwork().to(device)
@@ -78,6 +125,16 @@ def train(
     optimizer = Adam(transform_net.parameters(), lr=1e-3)
     mse_loss = nn.MSELoss(reduction="mean")
 
+    global_step = 0
+    if resume or resume_checkpoint:
+        checkpoint_path = Path(resume_checkpoint) if resume_checkpoint else find_latest_checkpoint(checkpoint_dir)
+        if checkpoint_path is None or not Path(checkpoint_path).exists():
+            raise FileNotFoundError(
+                f"No checkpoint found. checkpoint_dir={checkpoint_dir} resume_checkpoint={resume_checkpoint}"
+            )
+        global_step = load_checkpoint(transform_net, optimizer, checkpoint_path, device)
+        print(f"Loaded checkpoint: {checkpoint_path} (starting from step={global_step})")
+
     video_loader, style_loader = make_dataloaders(
         video_root=dataset_dir, style_root=style_dir, batch_size=batch_size, num_workers=num_workers
     )
@@ -85,8 +142,14 @@ def train(
 
     transform_net.train()
 
-    style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
-    global_step = 0
+    if style_mode == "pointillism":
+        tv_weight = 0.0
+        style_layers = ["relu1_2", "relu2_2", "relu3_3"]
+    elif style_mode == "impressionism":
+        tv_weight = 1e-3
+        style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_1", "relu5_1"]
+    else:
+        style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
 
     for epoch in range(epochs):
         for frame_t in video_loader:
@@ -99,13 +162,12 @@ def train(
 
             optimizer.zero_grad(set_to_none=True)
 
-            with autocast(enabled=use_amp):
-                y_curr = transform_net(frame_t)
+            y_curr = transform_net(frame_t)
 
-                content_target, _ = vgg(frame_t)
-                _, style_targets = vgg(style_images)
-                stylized_curr_for_vgg = (y_curr + 1.0) / 2.0
-                generated_content, generated_styles = vgg(stylized_curr_for_vgg)
+            content_target, _ = vgg(frame_t)
+            _, style_targets = vgg(style_images)
+            stylized_curr_for_vgg = (y_curr + 1.0) / 2.0
+            generated_content, generated_styles = vgg(stylized_curr_for_vgg)
 
             content_loss = mse_loss(generated_content.float(), content_target.float())
 
@@ -113,9 +175,14 @@ def train(
             for layer_name in style_layers:
                 generated_gram = gram_matrix(generated_styles[layer_name])
                 target_gram = gram_matrix(style_targets[layer_name])
-                style_loss = style_loss + mse_loss(generated_gram.float(), target_gram.float())
 
-            tv_penalty = tv_loss(stylized_curr_for_vgg.float()) 
+                layer_loss = mse_loss(generated_gram.float(), target_gram.float())
+                if layer_name in ["relu4_1", "relu5_1"]:
+                    layer_loss = layer_loss * 10.0
+
+                style_loss = style_loss + layer_loss
+
+            tv_penalty = tv_loss(stylized_curr_for_vgg.float())
 
             loss = (
                 (content_weight * content_loss)
@@ -123,24 +190,27 @@ def train(
                 + (tv_weight * tv_penalty)
             )
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
 
             global_step += 1
 
             if checkpoint_interval and global_step % checkpoint_interval == 0:
-                save_checkpoint(transform_net, checkpoint_dir, global_step)
+                save_checkpoint(transform_net, optimizer, checkpoint_dir, global_step)
+
+            weighted_content = content_weight * content_loss.item()
+            weighted_style = style_weight * style_loss.item()
+            weighted_tv = tv_weight * tv_penalty.item()
 
             print(
                 f"epoch={epoch + 1} step={global_step} "
-                f"content={content_loss.item():.4f} "
-                f"style={style_loss.item():.4f} "
-                f"tv={tv_penalty.item():.4f} "
+                f"content={weighted_content:.4f} "
+                f"style={weighted_style:.4f} "
+                f"tv={weighted_tv:.4f} "
                 f"total={loss.item():.4f}"
             )
 
-    save_checkpoint(transform_net, checkpoint_dir, global_step)
+    save_checkpoint(transform_net, optimizer, checkpoint_dir, global_step)
     return transform_net
 
 
@@ -158,10 +228,10 @@ if __name__ == "__main__":
         default=STYLE_ROOT,
         help="Path to the style dataset (WikiArt).",
     )
-    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs.")
+    parser.add_argument("--epochs", type=int, default=600, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
-    parser.add_argument("--content_weight", type=float, default=1000.0, help="Weight for content loss.")
+    parser.add_argument("--content_weight", type=float, default=5000.0, help="Weight for content loss.")
     parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
     parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
     parser.add_argument(
@@ -169,6 +239,24 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--checkpoint_dir", type=str, default=CHECKPOINT_ROOT.replace("checkpoints", "checkpoints_baseline"), help="Directory to save checkpoints."
+    )
+    parser.add_argument(
+        "--style_mode",
+        type=str,
+        choices=["pointillism", "impressionism"],
+        default=None,
+        help="Dynamic configuration for specific artistic styles.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume training from the latest checkpoint in --checkpoint_dir.",
+    )
+    parser.add_argument(
+        "--resume_checkpoint",
+        type=str,
+        default=None,
+        help="Resume from a specific checkpoint path. Overrides --resume latest-selection.",
     )
 
     args = parser.parse_args()
@@ -183,4 +271,7 @@ if __name__ == "__main__":
         tv_weight=args.tv_weight,
         checkpoint_interval=args.checkpoint_interval,
         checkpoint_dir=args.checkpoint_dir,
+        style_mode=args.style_mode,
+        resume=args.resume,
+        resume_checkpoint=args.resume_checkpoint,
     )
