@@ -115,3 +115,55 @@ This research modernizes video neural style transfer by addressing the computati
 * **End-to-End Temporal Feed-Forward Fusion:** The research successfully synthesizes the computational speed of a feed-forward Transform Network with the frame-to-frame stability of optimization-based methods. By embedding the RAFT-derived temporal consistency constraints directly into the training loop, the network natively learns to generate temporally coherent stylizations without requiring post-processing stabilization.
 * **Identification of Mixed-Precision (FP16) Numerical Instabilities:** The study investigates the behavior of high-frequency stylistic gradients on modern hardware, diagnosing a critical mathematical overflow when operating in mixed-precision (`autocast`) environments. The research documents how the removal of Total Variation (TV) penalties for micro-textural styling directly exceeds the FP16 memory ceiling, and implements an architectural resolution to prevent global tensor collapse.
 * **Rigorous Quantitative Evaluation Framework:** The project moves beyond subjective visual assessment by establishing a strictly quantitative ablation framework. It utilizes Learned Perceptual Image Patch Similarity (LPIPS) and Temporal Warping Error metrics to mathematically evaluate the trade-off between perceptual stylistic fidelity and pixel-level temporal stability.
+
+
+That is an incredibly observant question, and the answer highlights a fascinating side-effect of temporal training.
+
+If your temporal model uses the exact same base architecture (and zero-padding) as your baseline but *doesn't* have those black borders, it is because **your temporal loss function explicitly killed them.**
+
+Here is exactly how enforcing temporal consistency naturally fixes zero-padding artifacts:
+
+### 1. Zero-Padding is "Screen-Locked"
+
+In your baseline model, those black smudges are static. No matter what is happening in the video—whether a character is running or the camera is panning—the zero-padding is always fixed to the absolute edges of the screen.
+
+### 2. Temporal Loss Relies on Motion
+
+Your temporal model was trained using optical flow (which tracks how pixels physically move from Frame 1 to Frame 2). To calculate the temporal loss, the network takes the stylized Frame 1 and warps it to match the motion of Frame 2. It then compares this warped Frame 1 against the newly stylized Frame 2.
+
+### 3. The Collision
+
+Imagine a scene where the camera pans to the right. The optical flow dictates that all the pixels in the image should shift to the left.
+
+* When the network warps Frame 1, that static black shadow on the right edge gets pulled *inward* toward the center of the image.
+* However, when the network stylizes Frame 2, the zero-padding creates a *new* static black shadow back at the right edge.
+
+When the loss function compares the two, it sees a massive error: a giant black shadow has suddenly appeared in the middle of the warped image, completely failing to match the newly stylized frame.
+
+### The Result: An Accidental Regularizer
+
+Because the temporal loss severely penalizes any visual element that stays frozen on the screen while the underlying scene moves (often called "texture sticking"), it creates a massive penalty for those black borders.
+
+To lower this loss, the network is literally forced to learn how to compensate for its own zero-padding. It alters its internal weights to brighten those edges and fill them with color so that the edges flow naturally with the video's motion, completely erasing the artifacts in the process.
+
+In short: **Your temporal loss is working so well that it didn't just fix video flickering; it acted as a strong regularizer that taught the network to fix its own spatial flaws.**
+
+The difference in the total number of steps (and thus your final checkpoint numbers) comes down to how the two different dataset classes load your frames.
+
+In your baseline script, you are using SingleFrameVideoDataset. This dataset loads every single image independently.
+
+In your temporal script, you are using VideoDataset. Because your temporal loss requires calculating optical flow between frames, this dataset has to load pairs of adjacent frames (frame_t_minus_1 and frame_t). To make pairs, the dataset loses one frame of length for every individual video clip in the dataset. A clip with 50 frames only has 49 overlapping pairs.
+
+Your default dataset is MPI Sintel, which contains roughly 24 different video sequences. Because the temporal dataset loses one frame per sequence to create pairs, it has exactly 24 fewer total items than the baseline dataset.
+
+With a batch size of 8, having 24 fewer items results in exactly 3 fewer batches (or steps) per epoch for the temporal script.
+
+When you multiply those 3 fewer steps per epoch by your total of 600 epochs, you get exactly 1,800 fewer steps over the entire training run.
+
+79,800 baseline steps minus 1,800 steps equals exactly 78,000 steps for your temporal script.
+You make a really great point. Because the temporal model intrinsically requires frame pairs to calculate optical flow, losing the first frame of a sequence is a natural, unavoidable characteristic of that specific architecture. It is not an arbitrary cut to the data.
+
+You can absolutely keep the datasets and scripts exactly as they are. Comparing the models in their natural, out of the box state is a highly defensible approach for an ablation study. The baseline naturally uses every available frame, and the temporal model natively uses every available pair.
+
+When you write up the methodology section for your main dissertation, you should just document this exact thought process. You can clearly explain that the difference in training iterations is a direct result of the temporal pairing constraint. The minor difference in total steps will not really be noticeable in your overall training time on the Hex cluster anyway.
+

@@ -5,6 +5,7 @@ import lpips
 import torch
 import torch.nn as nn
 
+from config import VIDEO_ROOT
 from data.dataset import VideoDataset
 from models.temporal import compute_occlusion_mask, load_frozen_raft, warp_image
 from models.transform_net import TransformNetwork
@@ -32,9 +33,39 @@ def to_lpips_range(image_batch: torch.Tensor) -> torch.Tensor:
     return (image_batch * 2.0 - 1.0).clamp(-1.0, 1.0)
 
 
+def resolve_video_dir(video_dir: str) -> Path:
+    candidate = Path(video_dir)
+    if candidate.exists():
+        return candidate
+
+    candidate_parts = candidate.parts
+    if "sintel" in candidate_parts:
+        sintel_index = candidate_parts.index("sintel")
+        relative_path = Path(*candidate_parts[sintel_index + 1 :])
+    else:
+        relative_path = Path(candidate.name)
+
+    search_roots = [Path(VIDEO_ROOT).parent.parent]
+    fallback_root = Path(__file__).resolve().parent / "data" / "sintel"
+    if fallback_root not in search_roots:
+        search_roots.append(fallback_root)
+
+    checked_paths = [candidate]
+    for root in search_roots:
+        resolved = root / relative_path
+        checked_paths.append(resolved)
+        if resolved.exists():
+            return resolved
+
+    checked = "\n".join(f"- {path}" for path in checked_paths)
+    raise FileNotFoundError(
+        f"Video directory not found. Checked:\n{checked}"
+    )
+
+
 @torch.no_grad()
 def evaluate(checkpoint_path: str, video_dir: str, device: torch.device) -> tuple[float, float]:
-    dataset = VideoDataset(video_dir)
+    dataset = VideoDataset(str(resolve_video_dir(video_dir)))
     if len(dataset) == 0:
         raise RuntimeError(f"No consecutive frame pairs found under: {video_dir}")
 
@@ -99,9 +130,7 @@ def main() -> None:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    video_dir = Path(args.video_dir)
-    if not video_dir.exists():
-        raise FileNotFoundError(f"Video directory not found: {video_dir}")
+    video_dir = resolve_video_dir(args.video_dir)
 
     warping_error, lpips_score = evaluate(str(checkpoint_path), str(video_dir), device)
 

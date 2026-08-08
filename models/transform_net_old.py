@@ -2,10 +2,26 @@ import torch
 import torch.nn as nn
 
 
+class ReflectionConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride):
+        super().__init__()
+        padding = kernel_size // 2
+        self.pad = nn.ReflectionPad2d(padding)
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=0,
+        )
+
+    def forward(self, x):
+        return self.conv(self.pad(x))
+
+
 def conv_block(in_channels, out_channels, kernel_size, stride, use_instance_norm=True):
-    padding = kernel_size // 2
     layers = [
-        nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding),
+        ReflectionConv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride),
     ]
     if use_instance_norm:
         layers.append(nn.InstanceNorm2d(out_channels, affine=True))
@@ -17,10 +33,10 @@ class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.block = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+            ReflectionConv2d(channels, channels, kernel_size=3, stride=1),
             nn.InstanceNorm2d(channels, affine=True),
             nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+            ReflectionConv2d(channels, channels, kernel_size=3, stride=1),
             nn.InstanceNorm2d(channels, affine=True),
         )
 
@@ -48,11 +64,11 @@ class TransformNetwork(nn.Module):
             nn.InstanceNorm2d(32, affine=True),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            ReflectionConv2d(32, 64, kernel_size=3, stride=2),
             nn.InstanceNorm2d(64, affine=True),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            ReflectionConv2d(64, 128, kernel_size=3, stride=2),
             nn.InstanceNorm2d(128, affine=True),
             nn.ReLU(inplace=True),
 
@@ -63,12 +79,12 @@ class TransformNetwork(nn.Module):
             ResidualBlock(128),
 
             nn.Upsample(scale_factor=2.0, mode='nearest'),
-            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            ReflectionConv2d(128, 64, kernel_size=3, stride=1),
             nn.InstanceNorm2d(64, affine=True),
             nn.ReLU(inplace=True),
 
             nn.Upsample(scale_factor=2.0, mode='nearest'),
-            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            ReflectionConv2d(64, 32, kernel_size=3, stride=1),
             nn.InstanceNorm2d(32, affine=True),
             nn.ReLU(inplace=True),
 
