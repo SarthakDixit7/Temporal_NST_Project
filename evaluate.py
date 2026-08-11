@@ -140,3 +140,12 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+"""
+
+            	Baseline Model	 Temporal Model (w/ RAFT)	Difference
+Warping Error	    0.002068	  0.000695	                3x reduction in flickering
+LPIPS	            0.612168	  0.622554	                Negligible
+"""
