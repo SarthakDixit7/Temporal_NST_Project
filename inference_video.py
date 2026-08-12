@@ -11,12 +11,15 @@ from torchvision.transforms.functional import to_tensor
 from models.transform_net import TransformNetwork
 
 try:
+    import sys
+    import torchvision.transforms.functional
+    sys.modules['torchvision.transforms.functional_tensor'] = torchvision.transforms.functional
     from realesrgan import RealESRGANer
     from basicsr.archs.rrdbnet_arch import RRDBNet
     HAS_REALESRGAN = True
-except ImportError:
+except ImportError as e:
     HAS_REALESRGAN = False
-    print("Warning: Real-ESRGAN not found. Upscaling will use simple bicubic resize.")
+    print(f"Warning: Real-ESRGAN not found or failed to load. Upscaling will use simple bicubic resize. Error: {e}")
 
 def calculate_scaled_dimensions(width, height, max_size=1024):
     """Calculates the new dimensions keeping the longest edge at max_size."""
