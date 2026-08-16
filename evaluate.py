@@ -64,13 +64,18 @@ def resolve_video_dir(video_dir: str) -> Path:
 
 
 @torch.no_grad()
-def evaluate(checkpoint_path: str, video_dir: str, device: torch.device) -> tuple[float, float]:
+def evaluate(
+    checkpoint_path: str,
+    video_dir: str,
+    device: torch.device,
+    require_pretrained_raft: bool = False,
+) -> tuple[float, float]:
     dataset = VideoDataset(str(resolve_video_dir(video_dir)))
     if len(dataset) == 0:
         raise RuntimeError(f"No consecutive frame pairs found under: {video_dir}")
 
     transform_net = load_transform_network(checkpoint_path, device)
-    raft = load_frozen_raft().to(device)
+    raft = load_frozen_raft(require_pretrained=require_pretrained_raft).to(device)
     raft.eval()
 
     loss_fn = lpips.LPIPS(net="vgg").to(device)
@@ -122,6 +127,11 @@ def main() -> None:
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device to run evaluation on (e.g. cpu, cuda, cuda:0).",
     )
+    parser.add_argument(
+        "--require_pretrained_raft",
+        action="store_true",
+        help="Fail fast if pretrained RAFT weights cannot be loaded.",
+    )
 
     args = parser.parse_args()
     device = torch.device(args.device)
@@ -132,7 +142,12 @@ def main() -> None:
 
     video_dir = resolve_video_dir(args.video_dir)
 
-    warping_error, lpips_score = evaluate(str(checkpoint_path), str(video_dir), device)
+    warping_error, lpips_score = evaluate(
+        str(checkpoint_path),
+        str(video_dir),
+        device,
+        require_pretrained_raft=args.require_pretrained_raft,
+    )
 
     print(f"Average Warping Error: {warping_error:.6f}")
     print(f"Average LPIPS: {lpips_score:.6f}")

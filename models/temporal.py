@@ -7,17 +7,34 @@ import torch.nn.functional as F
 from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
 
 
-def load_frozen_raft() -> torch.nn.Module:
-    """Load a frozen pre-trained RAFT-Large model."""
+def load_frozen_raft(require_pretrained: bool = False, log_status: bool = True) -> torch.nn.Module:
+    """Load a frozen RAFT-Large model.
+
+    By default, the loader attempts to use pretrained weights and falls back to
+    random initialization if weight loading fails. Set `require_pretrained=True`
+    to raise instead of falling back.
+    """
+    pretrained_loaded = False
     try:
         weights = Raft_Large_Weights.DEFAULT
         model = raft_large(weights=weights)
+        pretrained_loaded = True
+        if log_status:
+            print("[RAFT] Loaded default pretrained RAFT-Large weights.")
     except Exception:
+        if require_pretrained:
+            raise RuntimeError(
+                "[RAFT] Failed to load pretrained RAFT-Large weights and "
+                "require_pretrained=True is set."
+            )
         model = raft_large(weights=None)
+        if log_status:
+            print("[RAFT] Warning: pretrained RAFT-Large weights unavailable; falling back to weights=None.")
 
     for parameter in model.parameters():
         parameter.requires_grad = False
 
+    model.pretrained_loaded = pretrained_loaded
     model.eval()
     return model
 

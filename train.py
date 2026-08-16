@@ -111,6 +111,7 @@ def train(
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
     style_mode=None,
+    require_pretrained_raft=False,
     resume=False,
     resume_checkpoint=None,
 ):
@@ -121,7 +122,7 @@ def train(
 
     transform_net = TransformNetwork().to(device)
     vgg = VGG19LossNetwork().to(device)
-    raft = load_frozen_raft().to(device)
+    raft = load_frozen_raft(require_pretrained=require_pretrained_raft).to(device)
 
     vgg.eval()
     raft.eval()
@@ -272,6 +273,11 @@ if __name__ == "__main__":
         help="Dynamic configuration for specific artistic styles."
     )
     parser.add_argument(
+        "--require_pretrained_raft",
+        action="store_true",
+        help="Fail fast if pretrained RAFT weights cannot be loaded.",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume training from the latest checkpoint in --checkpoint_dir.",
@@ -297,6 +303,7 @@ if __name__ == "__main__":
         checkpoint_interval=args.checkpoint_interval,
         checkpoint_dir=args.checkpoint_dir,
         style_mode=args.style_mode,
+        require_pretrained_raft=args.require_pretrained_raft,
         resume=args.resume,
         resume_checkpoint=args.resume_checkpoint,
     )
