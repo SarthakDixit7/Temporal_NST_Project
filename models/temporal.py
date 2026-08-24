@@ -6,6 +6,17 @@ import torch
 import torch.nn.functional as F
 from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
 
+RAFT_WEIGHTS = Raft_Large_Weights.DEFAULT
+RAFT_TRANSFORMS = RAFT_WEIGHTS.transforms()
+
+
+def preprocess_raft_inputs(
+    image1: torch.Tensor,
+    image2: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Prepare [0, 1] image tensors for pretrained torchvision RAFT."""
+    return RAFT_TRANSFORMS(image1, image2)
+
 
 def load_frozen_raft(require_pretrained: bool = False, log_status: bool = True) -> torch.nn.Module:
     """Load a frozen RAFT-Large model.
@@ -16,8 +27,7 @@ def load_frozen_raft(require_pretrained: bool = False, log_status: bool = True) 
     """
     pretrained_loaded = False
     try:
-        weights = Raft_Large_Weights.DEFAULT
-        model = raft_large(weights=weights)
+        model = raft_large(weights=RAFT_WEIGHTS)
         pretrained_loaded = True
         if log_status:
             print("[RAFT] Loaded default pretrained RAFT-Large weights.")
@@ -84,10 +94,10 @@ def compute_occlusion_mask(
 ) -> torch.Tensor:
     """Compute a forward-backward consistency mask.
 
-    Pixels are kept when ||f + warp(b, f)||_2^2 < epsilon.
+    Pixels are kept when ||b + warp(f, b)||_2^2 < epsilon.
     """
-    warped_backward = warp_image(flow_backward, flow_forward)
-    consistency = flow_forward + warped_backward
+    warped_forward = warp_image(flow_forward, flow_backward)
+    consistency = flow_backward + warped_forward
     squared_distance = torch.sum(consistency * consistency, dim=1, keepdim=True)
     return (squared_distance < epsilon).to(dtype=flow_forward.dtype)
 

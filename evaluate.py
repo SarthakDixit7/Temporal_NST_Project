@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from config import VIDEO_ROOT
 from data.dataset import VideoDataset
-from models.temporal import compute_occlusion_mask, compute_inbounds_mask, load_frozen_raft, warp_image
+from models.temporal import compute_occlusion_mask, compute_inbounds_mask, load_frozen_raft, warp_image, preprocess_raft_inputs
 from models.transform_net import TransformNetwork
 
 
@@ -93,9 +93,25 @@ def evaluate(
         stylized_t_minus_1 = transform_net(frame_t_minus_1)
         stylized_t = transform_net(frame_t)
 
-        flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
-        flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
-        occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
+        raft_prev, raft_curr = preprocess_raft_inputs(
+            frame_t_minus_1,
+            frame_t,
+        )
+
+        flow_forward = raft(raft_prev, raft_curr)[-1]
+
+        raft_curr, raft_prev = preprocess_raft_inputs(
+            frame_t,
+            frame_t_minus_1,
+        )
+
+        flow_backward = raft(raft_curr, raft_prev)[-1]
+
+        occlusion_mask = compute_occlusion_mask(
+            flow_forward,
+            flow_backward,
+        )
+
         inbounds_mask = compute_inbounds_mask(flow_backward)
 
         warped_stylized_t_minus_1 = warp_image(stylized_t_minus_1, flow_backward)
