@@ -1,17 +1,36 @@
-# CUDA-enabled PyTorch wheels (CUDA 12.1 is highly recommended for stability and RealESRGAN compatibility)
+# ---------------------------------------------------------
+# PyTorch Deep Learning Ecosystem
+# (CUDA 12.1 is highly recommended for stability and RealESRGAN compatibility)
+# ---------------------------------------------------------
 --index-url https://download.pytorch.org/whl/cu121
 --extra-index-url https://pypi.org/simple
 
-torch==2.5.1+cu121
-torchvision==0.20.1+cu121
-opencv-python==5.0.0.93
-numpy==2.4.4
-tqdm
-requests
-pycocotools
-Pillow
-datasets
-huggingface-hub
-realesrgan==0.3.0
-lpips
-basicsr==1.4.2
+torch==2.5.1+cu121        # Core deep learning framework
+torchvision==0.20.1+cu121 # Vision models (VGG-19, RAFT, Transforms)
+
+# ---------------------------------------------------------
+# Image and Video Processing
+# ---------------------------------------------------------
+opencv-python==5.0.0.93   # Video I/O and frame manipulation
+Pillow                    # PIL for image processing and YCbCr color conversion
+numpy==2.4.4              # Array and matrix manipulation
+
+# ---------------------------------------------------------
+# Inference and Upscaling (Real-ESRGAN)
+# ---------------------------------------------------------
+realesrgan==0.3.0         # High-fidelity video upscaler for 4K inference
+basicsr==1.4.2            # Core architecture dependencies (RRDBNet)
+
+# ---------------------------------------------------------
+# Evaluation Metrics
+# ---------------------------------------------------------
+lpips                     # Learned Perceptual Image Patch Similarity for evaluation
+
+# ---------------------------------------------------------
+# Utilities and Datasets
+# ---------------------------------------------------------
+tqdm                      # Progress bars during training and evaluation
+requests                  # Web requests for downloading weights/datasets
+pycocotools               # Toolkit for parsing MS-COCO baseline datasets
+datasets                  # HuggingFace Datasets utility
+huggingface-hub           # Accessing and caching HuggingFace repositories
