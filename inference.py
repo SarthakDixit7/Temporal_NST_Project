@@ -42,7 +42,8 @@ def preserve_content_color(content_image: Image.Image, stylized_image: Image.Ima
 def infer(content_path, checkpoint_path, output_path, resolution, preserve_color=True):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransformNetwork().to(device)
-    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    payload = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    state_dict = payload["model_state_dict"] if isinstance(payload, dict) and "model_state_dict" in payload else payload
     model.load_state_dict(state_dict)
     model.eval()
 

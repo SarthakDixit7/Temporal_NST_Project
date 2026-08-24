@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from config import CHECKPOINT_ROOT, STYLE_ROOT, VIDEO_ROOT
+from config import CHECKPOINT_ROOT, STYLE_ROOT, VIDEO_ROOT, DEFAULT_CONTENT_WEIGHT, DEFAULT_STYLE_WEIGHT, DEFAULT_TV_WEIGHT
 from data.dataset import StyleDataset, SingleFrameVideoDataset
 from models.transform_net import TransformNetwork
 from models.vgg_loss import VGG19LossNetwork, gram_matrix
@@ -102,9 +102,9 @@ def train(
     epochs=1,
     batch_size=8,
     num_workers=4,
-    content_weight=5000.0,
-    style_weight=1e10,
-    tv_weight=1e-3,
+    content_weight=DEFAULT_CONTENT_WEIGHT,
+    style_weight=DEFAULT_STYLE_WEIGHT,
+    tv_weight=DEFAULT_TV_WEIGHT,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints_baseline",
     style_mode=None,
@@ -231,9 +231,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=600, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
-    parser.add_argument("--content_weight", type=float, default=5000.0, help="Weight for content loss.")
-    parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
-    parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
+    parser.add_argument("--content_weight", type=float, default=DEFAULT_CONTENT_WEIGHT, help="Weight for content loss.")
+    parser.add_argument("--style_weight", type=float, default=DEFAULT_STYLE_WEIGHT, help="Weight for style loss.")
+    parser.add_argument("--tv_weight", type=float, default=DEFAULT_TV_WEIGHT, help="Weight for total variation loss.")
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
     )
