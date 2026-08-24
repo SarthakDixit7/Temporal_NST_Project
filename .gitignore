@@ -10,3 +10,5 @@ env/
 venv/
 .vscode/
 *.egg-info/
+*.mp4
+*.code-workspace

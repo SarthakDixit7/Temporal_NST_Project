@@ -98,10 +98,15 @@ def evaluate(
         occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
 
         warped_stylized_t_minus_1 = warp_image(stylized_t_minus_1, flow_forward)
-        warping_error = mse_loss(
-            occlusion_mask.float() * stylized_t.float(),
-            occlusion_mask.float() * warped_stylized_t_minus_1.float(),
-        )
+        diff = stylized_t.float() - warped_stylized_t_minus_1.float()
+        squared_error = (diff ** 2) * occlusion_mask.float()
+        
+        valid_pixels = occlusion_mask.sum()
+        if valid_pixels > 0:
+            # Average over all valid elements (pixels * channels)
+            warping_error = squared_error.sum() / (valid_pixels * stylized_t.shape[1])
+        else:
+            warping_error = torch.tensor(0.0, device=device)
 
         lpips_score = loss_fn(
             stylized_t.float(),
