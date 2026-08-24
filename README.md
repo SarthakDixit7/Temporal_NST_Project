@@ -24,11 +24,11 @@ The project introduces Dynamic Style Routing to adapt spatial regularisation bas
 It is highly recommended to run this project inside an isolated virtual environment to prevent dependency conflicts (especially with PyTorch and Real-ESRGAN).
 
 ```bash
-# 1. Create and activate a pristine virtual environment
+# 1. Create and activate a new virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 2. Upgrade pip and install the precise requirements
+# 2. Upgrade pip and install the requirements
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
