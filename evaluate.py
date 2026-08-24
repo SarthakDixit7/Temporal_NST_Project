@@ -150,8 +150,9 @@ def main() -> None:
         help="Device to run evaluation on (e.g. cpu, cuda, cuda:0).",
     )
     parser.add_argument(
-        "--require_pretrained_raft",
+        "--allow_raft_fallback",
         action="store_false",
+        dest="require_pretrained_raft",
         default=True,
         help="Allow fallback to random RAFT weights if pretrained cannot be loaded.",
     )
@@ -179,11 +180,3 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-
-
-"""
-
-            	Baseline Model	 Temporal Model (w/ RAFT)	Difference
-Warping Error	    0.002068	  0.000695	                3x reduction in flickering
-LPIPS	            0.612168	  0.622554	                Negligible
-"""

@@ -274,8 +274,9 @@ if __name__ == "__main__":
         help="Dynamic configuration for specific artistic styles."
     )
     parser.add_argument(
-        "--require_pretrained_raft",
+        "--allow_raft_fallback",
         action="store_false",
+        dest="require_pretrained_raft",
         default=True,
         help="Allow fallback to random RAFT weights if pretrained cannot be loaded.",
     )
