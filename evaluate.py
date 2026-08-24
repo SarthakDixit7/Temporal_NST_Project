@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from config import VIDEO_ROOT
 from data.dataset import VideoDataset
-from models.temporal import compute_occlusion_mask, load_frozen_raft, warp_image
+from models.temporal import compute_occlusion_mask, compute_inbounds_mask, load_frozen_raft, warp_image
 from models.transform_net import TransformNetwork
 
 
@@ -68,7 +68,7 @@ def evaluate(
     checkpoint_path: str,
     video_dir: str,
     device: torch.device,
-    require_pretrained_raft: bool = False,
+    require_pretrained_raft: bool = True,
 ) -> tuple[float, float]:
     dataset = VideoDataset(str(resolve_video_dir(video_dir)))
     if len(dataset) == 0:
@@ -81,12 +81,12 @@ def evaluate(
     loss_fn = lpips.LPIPS(net="vgg").to(device)
     loss_fn.eval()
 
-    mse_loss = nn.MSELoss(reduction="mean")
-    warping_error_sum = 0.0
-    lpips_sum = 0.0
-    pair_count = 0
+    sequence_stats = {}
 
-    for frame_t_minus_1, frame_t in dataset:
+    for frame_t_minus_1, frame_t, seq_name in dataset:
+        if seq_name not in sequence_stats:
+            sequence_stats[seq_name] = {"warping_error": 0.0, "lpips": 0.0, "count": 0}
+
         frame_t_minus_1 = frame_t_minus_1.unsqueeze(0).to(device)
         frame_t = frame_t.unsqueeze(0).to(device)
 
@@ -96,14 +96,15 @@ def evaluate(
         flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
         flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
         occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
+        inbounds_mask = compute_inbounds_mask(flow_backward)
 
-        warped_stylized_t_minus_1 = warp_image(stylized_t_minus_1, flow_forward)
+        warped_stylized_t_minus_1 = warp_image(stylized_t_minus_1, flow_backward)
         diff = stylized_t.float() - warped_stylized_t_minus_1.float()
-        squared_error = (diff ** 2) * occlusion_mask.float()
+        valid_mask = occlusion_mask.float() * inbounds_mask.float()
+        squared_error = (diff ** 2) * valid_mask
         
-        valid_pixels = occlusion_mask.sum()
+        valid_pixels = valid_mask.sum()
         if valid_pixels > 0:
-            # Average over all valid elements (pixels * channels)
             warping_error = squared_error.sum() / (valid_pixels * stylized_t.shape[1])
         else:
             warping_error = torch.tensor(0.0, device=device)
@@ -113,11 +114,27 @@ def evaluate(
             to_lpips_range(frame_t.float()),
         ).mean()
 
-        warping_error_sum += float(warping_error.item())
-        lpips_sum += float(lpips_score.item())
-        pair_count += 1
+        sequence_stats[seq_name]["warping_error"] += float(warping_error.item())
+        sequence_stats[seq_name]["lpips"] += float(lpips_score.item())
+        sequence_stats[seq_name]["count"] += 1
 
-    return warping_error_sum / pair_count, lpips_sum / pair_count
+    print("\n--- Per-Sequence Results ---")
+    seq_warping_errors = []
+    seq_lpips_scores = []
+    
+    for seq_name, stats in sorted(sequence_stats.items()):
+        count = stats["count"]
+        mean_we = stats["warping_error"] / count
+        mean_lpips = stats["lpips"] / count
+        seq_warping_errors.append(mean_we)
+        seq_lpips_scores.append(mean_lpips)
+        print(f"Sequence: {seq_name:<20} | Pairs: {count:<4} | Warping Error: {mean_we:.6f} | LPIPS: {mean_lpips:.6f}")
+
+    print("----------------------------\n")
+    global_mean_we = sum(seq_warping_errors) / len(seq_warping_errors)
+    global_mean_lpips = sum(seq_lpips_scores) / len(seq_lpips_scores)
+
+    return global_mean_we, global_mean_lpips
 
 
 def main() -> None:
@@ -134,8 +151,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--require_pretrained_raft",
-        action="store_true",
-        help="Fail fast if pretrained RAFT weights cannot be loaded.",
+        action="store_false",
+        default=True,
+        help="Allow fallback to random RAFT weights if pretrained cannot be loaded.",
     )
 
     args = parser.parse_args()
@@ -154,8 +172,8 @@ def main() -> None:
         require_pretrained_raft=args.require_pretrained_raft,
     )
 
-    print(f"Average Warping Error: {warping_error:.6f}")
-    print(f"Average LPIPS: {lpips_score:.6f}")
+    print(f"Global Sequence-Averaged Warping Error: {warping_error:.6f}")
+    print(f"Global Sequence-Averaged LPIPS: {lpips_score:.6f}")
 
 
 if __name__ == "__main__":

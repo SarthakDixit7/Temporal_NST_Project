@@ -90,3 +90,22 @@ def compute_occlusion_mask(
     consistency = flow_forward + warped_backward
     squared_distance = torch.sum(consistency * consistency, dim=1, keepdim=True)
     return (squared_distance < epsilon).to(dtype=flow_forward.dtype)
+
+
+def compute_inbounds_mask(flow: torch.Tensor) -> torch.Tensor:
+    """Compute a mask indicating which target pixels sample from within the source image."""
+    batch_size, _, height, width = flow.shape
+    device = flow.device
+
+    base_x = torch.linspace(-1.0, 1.0, width, device=device, dtype=torch.float32)
+    base_y = torch.linspace(-1.0, 1.0, height, device=device, dtype=torch.float32)
+    grid_y, grid_x = torch.meshgrid(base_y, base_x, indexing="ij")
+    base_grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0).expand(batch_size, -1, -1, -1)
+
+    flow_x = 2.0 * flow[:, 0].float() / max(width - 1, 1)
+    flow_y = 2.0 * flow[:, 1].float() / max(height - 1, 1)
+    normalized_flow = torch.stack((flow_x, flow_y), dim=-1)
+
+    sampling_grid = base_grid + normalized_flow
+    inbounds = (sampling_grid[..., 0].abs() <= 1.0) & (sampling_grid[..., 1].abs() <= 1.0)
+    return inbounds.unsqueeze(1).to(dtype=flow.dtype)

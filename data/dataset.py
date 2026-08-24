@@ -30,7 +30,7 @@ def _resize_longest_side(img: Image.Image, max_longest_side: int = 512) -> Image
     return img.resize(new_size, Image.BICUBIC)
 
 
-def _list_frame_pairs(root_dir: str) -> List[tuple[str, str]]:
+def _list_frame_pairs(root_dir: str) -> List[tuple[str, str, str]]:
     """Collect consecutive frame pairs grouped by sequence directory."""
     root = Path(root_dir)
     if not root.exists():
@@ -43,11 +43,11 @@ def _list_frame_pairs(root_dir: str) -> List[tuple[str, str]]:
         if frame_path.is_file() and frame_path.suffix.lower() in allowed_suffixes:
             sequence_frames.setdefault(frame_path.parent, []).append(frame_path)
 
-    pairs: List[tuple[str, str]] = []
+    pairs: List[tuple[str, str, str]] = []
     for sequence_dir in sorted(sequence_frames):
         frames = sorted(sequence_frames[sequence_dir])
         for previous_frame, current_frame in zip(frames[:-1], frames[1:]):
-            pairs.append((str(previous_frame), str(current_frame)))
+            pairs.append((str(previous_frame), str(current_frame), sequence_dir.name))
 
     return pairs
 
@@ -140,7 +140,7 @@ class VideoDataset(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        previous_path, current_path = self.pairs[idx]
+        previous_path, current_path, seq_name = self.pairs[idx]
 
         with Image.open(previous_path) as previous_frame:
             previous_frame = previous_frame.convert("RGB")
@@ -150,7 +150,7 @@ class VideoDataset(Dataset):
             current_frame = current_frame.convert("RGB")
             current_frame = self.transform(current_frame)
 
-        return previous_frame, current_frame
+        return previous_frame, current_frame, seq_name
 
 class SingleFrameVideoDataset(Dataset):
     """Dataset for video frames loaded individually."""

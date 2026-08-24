@@ -13,9 +13,9 @@ from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
-from config import CHECKPOINT_ROOT, STYLE_ROOT, VIDEO_ROOT
+from config import CHECKPOINT_ROOT, STYLE_ROOT, VIDEO_ROOT, DEFAULT_CONTENT_WEIGHT, DEFAULT_STYLE_WEIGHT, DEFAULT_TEMPORAL_WEIGHT, DEFAULT_TV_WEIGHT
 from data.dataset import StyleDataset, VideoDataset
-from models.temporal import compute_occlusion_mask, load_frozen_raft, warp_image
+from models.temporal import compute_occlusion_mask, compute_inbounds_mask, load_frozen_raft, warp_image
 from models.transform_net import TransformNetwork
 from models.vgg_loss import VGG19LossNetwork, gram_matrix
 
@@ -104,14 +104,14 @@ def train(
     epochs=1,
     batch_size=8,
     num_workers=4,
-    content_weight=5000.0,
-    style_weight=1e10,
-    tv_weight=1e-3,
-    temporal_weight=1000.0,
+    content_weight=DEFAULT_CONTENT_WEIGHT,
+    style_weight=DEFAULT_STYLE_WEIGHT,
+    tv_weight=DEFAULT_TV_WEIGHT,
+    temporal_weight=DEFAULT_TEMPORAL_WEIGHT,
     checkpoint_interval=500,
     checkpoint_dir="checkpoints",
     style_mode=None,
-    require_pretrained_raft=False,
+    require_pretrained_raft=True,
     resume=False,
     resume_checkpoint=None,
 ):
@@ -160,7 +160,7 @@ def train(
         style_layers = ["relu1_2", "relu2_2", "relu3_3", "relu4_3"]
 
     for epoch in range(epochs):
-        for frame_t_minus_1, frame_t in video_loader:
+        for frame_t_minus_1, frame_t, _ in video_loader:
             style_images = next(style_iter)
 
             frame_t_minus_1 = frame_t_minus_1.to(device)
@@ -175,10 +175,11 @@ def train(
                 flow_forward = raft(frame_t_minus_1 * 255.0, frame_t * 255.0)[-1]
                 flow_backward = raft(frame_t * 255.0, frame_t_minus_1 * 255.0)[-1]
                 occlusion_mask = compute_occlusion_mask(flow_forward, flow_backward)
+                inbounds_mask = compute_inbounds_mask(flow_backward)
 
             y_prev = transform_net(frame_t_minus_1)
             y_curr = transform_net(frame_t)
-            warped_y_prev = warp_image(y_prev, flow_forward)
+            warped_y_prev = warp_image(y_prev, flow_backward)
 
             content_target, _ = vgg(frame_t)
             _, style_targets = vgg(style_images)
@@ -199,10 +200,10 @@ def train(
                 style_loss = style_loss + layer_loss
 
             tv_penalty = tv_loss(stylized_curr_for_vgg.float()) 
-            temporal_loss = mse_loss(
-                occlusion_mask.float() * y_curr.float(),
-                occlusion_mask.float() * warped_y_prev.float(),
-            )
+            
+            mask = occlusion_mask.float() * inbounds_mask.float()
+            diff = y_curr.float() - warped_y_prev.float()
+            temporal_loss = ((diff.square() * mask).sum() / (mask.sum() * y_curr.shape[1]).clamp_min(1.0))
 
             loss = (
                 (content_weight * content_loss)
@@ -256,11 +257,11 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=600, help="Number of training epochs.")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training.")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
-    parser.add_argument("--content_weight", type=float, default=5000.0, help="Weight for content loss.")
-    parser.add_argument("--style_weight", type=float, default=1e10, help="Weight for style loss.")
-    parser.add_argument("--tv_weight", type=float, default=1e-3, help="Weight for total variation loss.")
+    parser.add_argument("--content_weight", type=float, default=DEFAULT_CONTENT_WEIGHT, help="Weight for content loss.")
+    parser.add_argument("--style_weight", type=float, default=DEFAULT_STYLE_WEIGHT, help="Weight for style loss.")
+    parser.add_argument("--tv_weight", type=float, default=DEFAULT_TV_WEIGHT, help="Weight for total variation loss.")
     parser.add_argument(
-        "--temporal_weight", type=float, default=1e5, help="Weight for temporal consistency loss."
+        "--temporal_weight", type=float, default=DEFAULT_TEMPORAL_WEIGHT, help="Weight for temporal consistency loss."
     )
     parser.add_argument(
         "--checkpoint_interval", type=int, default=500, help="Steps between saving checkpoints."
@@ -274,8 +275,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--require_pretrained_raft",
-        action="store_true",
-        help="Fail fast if pretrained RAFT weights cannot be loaded.",
+        action="store_false",
+        default=True,
+        help="Allow fallback to random RAFT weights if pretrained cannot be loaded.",
     )
     parser.add_argument(
         "--resume",
