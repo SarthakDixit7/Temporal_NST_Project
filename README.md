@@ -17,7 +17,7 @@ The system consists of three main components:
 ## Temporal Training
 During temporal training, the network processes consecutive MPI Sintel frame pairs. The temporal loss aligns the current stylised frame with the previous stylised frame, warped according to the forward optical flow. A forward-backward consistency mask (with epsilon = 1.0) ensures temporal loss is only applied to valid, non-occluded regions.
 
-*Note for reproduction:* The original successful temporal training run multiplies the `[0,1]` image tensors by 255 before passing them to the RAFT network. This preprocessing convention is retained in the training and original evaluation scripts to ensure the exact reproducibility of the submitted experiments.
+*Note for reproduction:* The original successful temporal training run multiplies the `[0,1]` image tensors by 255 before passing them to the RAFT network. This preprocessing convention is retained in the training and original evaluation scripts to reproduce the configuration used for the submitted experiments.
 
 ## RAFT Evaluation Protocols
 There are two distinct evaluation protocols provided for the frozen line-art checkpoint pair:
@@ -27,7 +27,7 @@ There are two distinct evaluation protocols provided for the frozen line-art che
 2. **Post-hoc standard-preprocessing evaluation** (`evaluate_posthoc_raft.py`)
    Uses the standard preprocessing associated with the default pretrained torchvision RAFT-Large weights.
 
-The two protocols change the optical-flow estimation preprocessing only. The separate Van Gogh "Starry Night" checkpoint pair was evaluated only under its original training-matched evaluation configuration.
+The two protocols change the optical-flow estimation preprocessing only. The separate Van Gogh "Starry Night" checkpoint pair was evaluated only under its original evaluation configuration.
 
 ## Quantitative Results
 
@@ -49,7 +49,7 @@ The two protocols change the optical-flow estimation preprocessing only. The sep
 * LPIPS: 0.652513 -> 0.658727
 
 ## Installation
-Requires Python 3.12 and a CUDA-capable GPU (CUDA 12.1).
+Requires Python 3.10.x and a CUDA-capable GPU compatible with the supplied CUDA 12.1 PyTorch build.
 
 ```bash
 # Create and activate virtual environment
@@ -154,6 +154,6 @@ python inference_video.py \
 
 ## Limitations
 * Evaluation uses MPI Sintel training sequences and is not a broad out-of-distribution validation.
-* Temporal improvement varies significantly by sequence.
+* Temporal improvement varies by sequence and was not uniform across the evaluated videos.
 * Optical-flow reliability affects Warping Error.
 * Models are style-specific; there is no universal cross-style metric interpretation.
