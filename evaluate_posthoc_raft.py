@@ -15,7 +15,7 @@ from data.dataset import VideoDataset
 @torch.no_grad()
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Post-hoc corrected evaluation of temporal and baseline models."
+        description="Post-hoc standard-preprocessing evaluation of temporal and baseline models."
     )
     parser.add_argument("--baseline_checkpoint", type=str, required=True, help="Path to baseline .pth")
     parser.add_argument("--temporal_checkpoint", type=str, required=True, help="Path to temporal .pth")
@@ -84,7 +84,7 @@ def main() -> None:
         temp_stylized_t_minus_1 = temporal_net(frame_t_minus_1)
         temp_stylized_t = temporal_net(frame_t)
 
-        # Corrected RAFT preprocessing and Flow Estimation (using ORIGINAL unstylised frames)
+        # Post-hoc standard RAFT preprocessing and Flow Estimation (using ORIGINAL unstylised frames)
         # Note: dataset outputs [0,1] floats. raft_transforms scales them properly.
         raft_input_t_m_1, raft_input_t = raft_transforms(frame_t_minus_1, frame_t)
         flow_forward = raft(raft_input_t_m_1, raft_input_t)[-1]
@@ -135,7 +135,7 @@ def main() -> None:
         })
 
     # Output Pair Results
-    pair_csv_path = "corrected_eval_pair_results.csv"
+    pair_csv_path = "posthoc_eval_pair_results.csv"
     with open(pair_csv_path, mode="w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "sequence", "frame_index", "baseline_warping_error", "temporal_warping_error",
@@ -166,7 +166,7 @@ def main() -> None:
             "valid_mask_fraction": sum(r["valid_mask_fraction"] for r in rows) / count,
         })
     
-    seq_csv_path = "corrected_eval_sequence_summary.csv"
+    seq_csv_path = "posthoc_eval_sequence_summary.csv"
     with open(seq_csv_path, mode="w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "sequence", "baseline_warping_error", "temporal_warping_error",

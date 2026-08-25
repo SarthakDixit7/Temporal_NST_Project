@@ -100,7 +100,7 @@ def evaluate(
         warped_stylized_t_minus_1 = warp_image(stylized_t_minus_1, flow_forward)
         diff = stylized_t.float() - warped_stylized_t_minus_1.float()
         squared_error = (diff ** 2) * occlusion_mask.float()
-        
+
         valid_pixels = occlusion_mask.sum()
         if valid_pixels > 0:
             # Average over all valid elements (pixels * channels)
@@ -160,12 +160,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-"""
-
-            	Baseline Model	 Temporal Model (w/ RAFT)	Difference
-Warping Error	    0.002068	  0.000695	                3x reduction in flickering
-LPIPS	            0.612168	  0.622554	                Negligible
-"""

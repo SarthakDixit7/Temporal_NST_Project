@@ -1,97 +1,159 @@
-# Stabilising Video Neural Style Transfer: A Dense Optical Flow Approach to Temporal Coherence
+# Stabilising Video Neural Style Transfer
+**Dense Optical Flow Approach to Temporal Coherence**
 
-This repository contains the official PyTorch implementation for the project **"Stabilising Video Neural Style Transfer: A Dense Optical Flow Approach to Temporal Coherence"**.
+This repository accompanies the MSc Artificial Intelligence dissertation at the University of Bath.
 
-The project investigates the use of modern dense optical-flow estimation (RAFT) within an offline training framework for feed-forward video neural style transfer. The primary goal is to mitigate the severe temporal aliasing (texture boiling and flickering) inherent in frame-by-frame processing.
+## Overview
+Feed-forward neural style transfer networks produce visually impressive results for static images but suffer from severe temporal inconsistency (flickering) when applied independently to video frames. This project stabilises video neural style transfer by applying temporal supervision during offline training.
 
-## Architecture & Methodology
+By estimating dense optical-flow correspondences between adjacent frames using a pretrained RAFT-Large network, we penalise temporal divergence in the generated output. Importantly, **RAFT and VGG-19 are training/evaluation components and are omitted from normal feed-forward inference**. The final trained Transform Network performs inference on single frames independently without requiring optical flow.
 
-The system is constructed upon three interacting architectural components, designed to restrict high computational costs to the offline training phase:
+## Architecture
+The system consists of three main components:
+1. **Transform Network**: A feed-forward generator that stylises frames.
+2. **VGG-19**: A frozen perceptual loss network used to enforce content and style fidelity during training.
+3. **RAFT-Large**: A frozen pretrained network that estimates dense optical-flow correspondences for temporal training supervision.
 
-1. **Feed-Forward Transform Network:** A residual convolutional architecture designed for efficient feed-forward inference. It utilises reflection padding, instance normalisation, and integer striding to prevent spatial information loss.
-2. **Dense Motion Estimator (RAFT):** A pre-trained Recurrent All-Pairs Field Transforms model used to compute bidirectional dense optical flow fields. This provides the exact vectors needed to track inter-frame pixel trajectories.
-3. **Perceptual Loss Extractor (VGG-19):** A fixed image classification network used to evaluate deep feature representations (Content and Style loss) during training. Max-pooling layers are overridden with average-pooling for smoother gradient flow.
+## Temporal Training
+During temporal training, the network processes consecutive MPI Sintel frame pairs. The temporal loss aligns the current stylised frame with the previous stylised frame, warped according to the forward optical flow. A forward-backward consistency mask (with epsilon = 1.0) ensures temporal loss is only applied to valid, non-occluded regions.
 
-### Dynamic Style Routing
-The project introduces Dynamic Style Routing to adapt spatial regularisation based on artistic frequency:
-- **Pointillism (High-Frequency):** Restricts Gram matrix computations to shallow layers (`relu1_2` to `relu3_3`) and explicitly disables Total Variation (TV) loss (`tv_weight = 0.0`) to preserve fine dots.
-- **Impressionism (Macro-Structural):** Expands style extraction to deeper layers (up to `relu5_1`) and applies TV loss (`tv_weight = 1e-3`) to encourage continuous brushstrokes.
+*Note for reproduction:* The original successful temporal training run multiplies the `[0,1]` image tensors by 255 before passing them to the RAFT network. This preprocessing convention is retained in the training and original evaluation scripts to ensure the exact reproducibility of the submitted experiments.
 
----
+## RAFT Evaluation Protocols
+There are two distinct evaluation protocols provided for the frozen line-art checkpoint pair:
 
-## Installation & Setup
+1. **Original training-matched evaluation** (`evaluate.py`)
+   Uses the original `[0,255]` RAFT convention exactly as seen during training.
+2. **Post-hoc standard-preprocessing evaluation** (`evaluate_posthoc_raft.py`)
+   Uses the standard preprocessing associated with the default pretrained torchvision RAFT-Large weights.
 
-It is highly recommended to run this project inside an isolated virtual environment to prevent dependency conflicts (especially with PyTorch and Real-ESRGAN).
+The two protocols change the optical-flow estimation preprocessing only. The separate Van Gogh "Starry Night" checkpoint pair was evaluated only under its original training-matched evaluation configuration.
+
+## Quantitative Results
+
+*Note: Results are style-specific. Different artistic styles use separately trained Transform Networks, and absolute metric values should not be compared directly across styles. Results are also sequence-dependent, as motion, occlusion, illumination, scene content, and optical-flow reliability affect measured values.*
+
+### Line Art — Original Training-Matched
+* Baseline Ewarp: 0.109265
+* Temporal Ewarp: 0.079878 (**26.90% lower**)
+* LPIPS: 0.680662 -> 0.683785
+
+### Line Art — Post-Hoc Standard Preprocessing
+* Baseline Ewarp: 0.229539
+* Temporal Ewarp: 0.221234 (**3.62% lower**)
+* LPIPS: 0.680662 -> 0.683785
+
+### Van Gogh “Starry Night” — Separate Original Evaluation
+* Baseline Ewarp: 0.156674
+* Temporal Ewarp: 0.067721 (**Baseline-to-temporal ratio: 2.31x**)
+* LPIPS: 0.652513 -> 0.658727
+
+## Installation
+Requires Python 3.12 and a CUDA-capable GPU (CUDA 12.1).
 
 ```bash
-# 1. Create and activate a pristine virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# 2. Upgrade pip and install the precise requirements
-pip install --upgrade pip
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-*Note: The `inference_video.py` script includes a built-in "monkey patch" for `torchvision.transforms.functional_tensor` to elegantly fix a known `basicsr` import issue on newer PyTorch versions. You do not need to manually edit `basicsr` files.*
+## Dataset
+The project evaluates on the MPI Sintel dataset. The dataset is not included in this repository.
+Place the extracted Sintel data such that the training frames are located at:
+`<video_dir>/` (e.g. `sintel/training/final/`) containing subdirectories of sequences (`alley_1`, `ambush_2`, etc.).
 
----
+## Training
 
-## Model Training
-
-To train the Temporal Neural Style Transfer model, use `train.py`. The script requires a dataset of sequential video frames (for temporal consistency) and a style directory containing your target style images. We recommend using the **MPI Sintel** dataset for video frames and **WikiArt** for styles.
-
+### Baseline Training (Independent Frames)
 ```bash
-# Basic training command
-python train.py \
-    --dataset_dir data/sintel \
-    --style_dir data/wikiart \
-    --checkpoint_dir checkpoints \
+python train_baseline.py \
+    --dataset_dir /path/to/sintel/training/final \
+    --style_dir /path/to/style_images \
     --epochs 600 \
     --batch_size 8
 ```
 
-### Key Training Arguments:
-- `--style_mode`: Choose a specific artistic dynamic configuration (`pointillism` or `impressionism`).
-- `--temporal_weight`: Adjust the strength of the temporal consistency loss (default: `1e5`).
-- `--resume`: Add this flag to automatically resume training from the latest checkpoint in your `--checkpoint_dir`.
-- `--checkpoint_interval`: How many steps between saving model weights (default: `500`).
-
-*Note on Hardware:* This project disables Automatic Mixed Precision (AMP) in `train.py` because zero-TV constraints on high-frequency styles can trigger FP16 overflow resulting in tensor collapse. Optimization is handled entirely in FP32.
-
----
-
-## Model Inference (Video)
-
-To stylize and upscale a video using your trained checkpoints, use `inference_video.py`. This script employs a **downscale-stylize-upscale** pipeline:
-1. Downscales the 4K/1080p video to enlarge abstract brushstrokes.
-2. Processes it through the feed-forward Transform Network.
-3. Uses **Real-ESRGAN** (`RRDBNet`) to upscale it back to the original high-resolution dimensions without blurring.
-
+### Temporal Training (Adjacent Frame Pairs)
+Applies RAFT temporal supervision with a default temporal weight of 1e5.
 ```bash
-# Run inference on a video
-python inference_video.py \
-    --input data/dogs.mp4 \
-    --output output/dogs_stylized.mp4 \
-    --checkpoint_dir checkpoints \
-    --max_size 1024
+python train.py \
+    --dataset_dir /path/to/sintel/training/final \
+    --style_dir /path/to/style_images \
+    --temporal_weight 1e5 \
+    --epochs 600 \
+    --batch_size 8
 ```
-
-### Key Inference Arguments:
-- `--input`: Path to your source `.mp4` video.
-- `--output`: Path to save the stylized `.mp4` video.
-- `--checkpoint_dir`: Directory containing your trained `.pth` models (the script automatically picks the latest).
-- `--checkpoint`: Provide a specific `.pth` file path to explicitly load it.
-- `--max_size`: The longest edge size for neural network processing (default: `1024`). Lower values produce thicker brush strokes.
-
----
 
 ## Evaluation
-
-The project includes an `evaluate.py` script for calculating objective metrics over testing datasets:
-- **Warping Error ($E_{warp}$):** Measures geometric frame-to-frame stability using a forward-backward occlusion mask (`epsilon = 1.0`).
-- **LPIPS:** Measures perceptual spatial fidelity relative to the original video frames.
-
+Run the original training-matched evaluation:
 ```bash
-python evaluate.py --dataset_dir data/sintel_test --checkpoint_dir checkpoints
+python evaluate.py \
+    --checkpoint_path /path/to/transform_net_iter_78000.pth \
+    --video_dir /path/to/sintel/training/final
 ```
+
+Run the post-hoc standard-preprocessing evaluation:
+```bash
+python evaluate_posthoc_raft.py \
+    --baseline_checkpoint /path/to/baseline.pth \
+    --temporal_checkpoint /path/to/temporal.pth \
+    --video_dir /path/to/sintel/training/final
+```
+
+## Inference
+Feed-forward inference does not require RAFT.
+
+**Image Inference:**
+```bash
+python inference.py \
+    --content_path /path/to/image.jpg \
+    --checkpoint_path /path/to/model.pth \
+    --output_path /path/to/output.png \
+    --resolution 1080
+```
+
+**Video Inference:**
+```bash
+python inference_video.py \
+    --input /path/to/video.mp4 \
+    --checkpoint /path/to/model.pth \
+    --output /path/to/output_video.mp4 \
+    --max_size 1024
+```
+*The optional Real-ESRGAN stage restores output resolution for qualitative high-resolution demonstrations and may modify fine stylistic details.*
+
+## Repository Structure
+```text
+.
+├── data/
+│   ├── dataset.py
+│   └── wikiart_urls.txt
+├── models/
+│   ├── temporal.py
+│   ├── transform_net.py
+│   └── vgg_loss.py
+├── evaluate.py
+├── evaluate_posthoc_raft.py
+├── inference.py
+├── inference_video.py
+├── train.py
+├── train_baseline.py
+├── requirements.txt
+└── README.md
+```
+
+## Reproducibility Notes
+* The final temporal model is trained in FP32 with AMP disabled.
+* Baseline and temporal pipelines have slightly different sample/update counts due to adjacent-pair construction.
+* Baseline training used 79,800 optimisation steps.
+* Temporal training used 78,000 optimisation steps.
+* The post-hoc evaluation modifies optical flow preprocessing only and does not constitute retraining.
+
+## Limitations
+* Evaluation uses MPI Sintel training sequences and is not a broad out-of-distribution validation.
+* Temporal improvement varies significantly by sequence.
+* Optical-flow reliability affects Warping Error.
+* Models are style-specific; there is no universal cross-style metric interpretation.

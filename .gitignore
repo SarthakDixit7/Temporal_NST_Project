@@ -1,14 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
 .venv/
+venv/
+env/
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Training artifacts
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+checkpoints_*/
+weights/
+
+# Datasets
 data/*
 !data/dataset.py
 !data/wikiart_urls.txt
-checkpoints/
-__pycache__/
-*.pyc
-.DS_Store
-env/
-venv/
-.vscode/
-*.egg-info/
+
+# Generated media
 *.mp4
+output/
+*.png
+*.jpg
+*.jpeg
+!data/wikiart_urls.txt
+
+# Logs / experiment state
+*.log
+runs/
+wandb/
+
+# Notebook/cache files
+.ipynb_checkpoints/
+
+# Project specific
+*.egg-info/
 *.code-workspace
