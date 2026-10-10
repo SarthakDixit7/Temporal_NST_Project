@@ -1,4 +1,3 @@
-Below is a cleaned-up README I’d use for submission. It keeps the technically important caveats, matches the dissertation, and avoids exaggerated claims.
 
 ````markdown
 # Stabilising Video Neural Style Transfer
